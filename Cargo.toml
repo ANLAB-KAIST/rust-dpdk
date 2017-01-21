@@ -1,0 +1,19 @@
+[package]
+
+name = "rust-dpdk"
+version = "0.0.1-dev"
+authors = [ "Keunhong Lee <dlrmsghd@gmail.com>" ]
+
+homepage = "https://github.com/ANLAB-KAIST/rust-dpdk"
+repository = "https://github.com/ANLAB-KAIST/rust-dpdk"
+documentation = "https://github.com/ANLAB-KAIST/rust-dpdk"
+license = "BSD-3-Clause"
+keywords = ["rust", "dpdk", "binding"]
+
+description = """
+Rust binding for Intel DPDK (under construction).
+"""
+
+[lib]
+name = "dpdk"
+path = "src/dpdk.rs"

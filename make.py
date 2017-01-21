@@ -55,9 +55,6 @@ class State:
         include_dir = path.joinpath("include")
         headers = set()
 
-        rust_src_path = Path("src").joinpath("dpdk.rs")
-        dpdk_include_path = self.dpdk_path.joinpath("include")
-
         for item in include_dir.iterdir():
             if not item.is_file():
                 continue
@@ -66,6 +63,12 @@ class State:
             if item == self.dpdk_config:
                 continue
             if not check_direct_include(item):
+                continue
+
+            # XXX
+            # This should be removed when https://github.com/servo/rust-bindgen/issues/412
+            # this issue is fixed.
+            if item.name == "rte_thash.h":
                 continue
             headers.add(item)
 
@@ -80,6 +83,7 @@ class State:
         dpdk_include_path = self.dpdk_path.joinpath("include")
         try:
             subprocess.check_output(["bindgen", "dpdk.h", "--output", str(rust_src_path),
+                                     "--no-unstable-rust",
                                      "--", "-I{}".format(dpdk_include_path), "-imacros", str(self.dpdk_config),
                                      "-march=native"])
         except OSError:
