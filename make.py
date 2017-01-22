@@ -64,12 +64,6 @@ class State:
                 continue
             if not check_direct_include(item):
                 continue
-
-            # XXX
-            # This should be removed when https://github.com/servo/rust-bindgen/issues/412
-            # this issue is fixed.
-            if item.name == "rte_thash.h":
-                continue
             headers.add(item)
 
         with open("dpdk.h", "w") as f:
