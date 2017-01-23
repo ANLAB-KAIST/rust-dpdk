@@ -55,8 +55,7 @@ class State:
     def find_link_libs(self):
         path = self.dpdk_path
         lib_dir = path.joinpath("lib")
-        libs = set()
-
+        libs = []
         for item in lib_dir.iterdir():
             if not item.is_file():
                 continue
@@ -64,17 +63,24 @@ class State:
                 continue
             if not item.name.startswith("librte_"):
                 continue
-            libs.add(item)
+            libs.append(item)
+        libs.sort()
 
-        self.dpdk_links = libs
+        format = re.compile(r"lib(.*)\.a")
+        link_list = []
+        for link in libs:
+            result = format.match(link.name)
+            if result is not None:
+                link_list.append(result.group(1))
+
+        self.dpdk_links = link_list
 
         return True
 
     def make_all_in_one_header(self):
         path = self.dpdk_path
         include_dir = path.joinpath("include")
-        headers = set()
-
+        headers = []
         for item in include_dir.iterdir():
             if not item.is_file():
                 continue
@@ -84,7 +90,10 @@ class State:
                 continue
             if not check_direct_include(item):
                 continue
-            headers.add(item)
+            if not item.stem in self.dpdk_links:
+                continue
+            headers.append(item)
+        headers.sort()
 
         with open("dpdk.h", "w") as f:
             for header in headers:
@@ -113,13 +122,10 @@ class State:
 
         with rust_build_rs_template.open("r") as template:
             template_string = template.read()
-            format = re.compile(r"lib(.*)\.a")
 
             link_list = ""
             for link in self.dpdk_links:
-                result = format.match(link.name)
-                if result is not None:
-                    link_list += "\n\"{}\",".format(result.group(1))
+                link_list += "\n\"{}\",".format(link)
             formatted = template_string.replace("%link_list%", link_list)
             with rust_build_rs.open("w") as f:
                 f.write(formatted)
