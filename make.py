@@ -114,7 +114,9 @@ class State:
         try:
             subprocess.check_output(["bindgen", "dpdk.c", "--output", str(rust_src_path),
                                      "--no-unstable-rust",
-                                     "--", "-I{}".format(dpdk_include_path), "-imacros", str(self.dpdk_config),
+                                     "--",
+                                     "-I{}".format(dpdk_include_path),
+                                     "-imacros", str(self.dpdk_config),
                                      "-march=native"])
             return True
         except OSError:
