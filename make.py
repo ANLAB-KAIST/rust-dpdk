@@ -2,6 +2,7 @@ import subprocess
 import os
 import logging
 from pathlib import Path
+import re
 
 
 def check_direct_include(path: Path):
@@ -22,6 +23,7 @@ class State:
     def __init__(self):
         self.dpdk_path = None
         self.dpdk_headers = None
+        self.dpdk_links = None
         self.dpdk_config = None
         self.phase = 1
 
@@ -47,6 +49,24 @@ class State:
         self.dpdk_config = config_header
 
         logging.info("DPDK is found at {}, config file is {}".format(self.dpdk_path, self.dpdk_config))
+
+        return True
+
+    def find_link_libs(self):
+        path = self.dpdk_path
+        lib_dir = path.joinpath("lib")
+        libs = set()
+
+        for item in lib_dir.iterdir():
+            if not item.is_file():
+                continue
+            if item.suffix != ".a":
+                continue
+            if not item.name.startswith("librte_"):
+                continue
+            libs.add(item)
+
+        self.dpdk_links = libs
 
         return True
 
@@ -80,19 +100,42 @@ class State:
                                      "--no-unstable-rust",
                                      "--", "-I{}".format(dpdk_include_path), "-imacros", str(self.dpdk_config),
                                      "-march=native"])
+            return True
         except OSError:
             logging.error("Cannot execute bindgen program")
         except subprocess.CalledProcessError:
             logging.error("bindgen did not exit correctly")
+        return False
+
+    def generate_build_rs(self):
+        rust_build_rs = Path("build.rs")
+        rust_build_rs_template = Path("build.rs.template")
+
+        with rust_build_rs_template.open("r") as template:
+            template_string = template.read()
+            format = re.compile(r"lib(.*)\.a")
+
+            link_list = ""
+            for link in self.dpdk_links:
+                result = format.match(link.name)
+                if result is not None:
+                    link_list += "\n\"{}\",".format(result.group(1))
+            formatted = template_string.replace("%link_list%", link_list)
+            with rust_build_rs.open("w") as f:
+                f.write(formatted)
 
 
 def main():
     state = State()
     if not state.find_dpdk():
         return
+    if not state.find_link_libs():
+        return
     if not state.make_all_in_one_header():
         return
     if not state.generate_rust_def():
+        return
+    if not state.generate_build_rs():
         return
     pass
 

@@ -3,8 +3,7 @@ use std::env;
 
 fn main() {
 
-	let link_list = vec![
-	    "rte_eal",
+	let link_list = vec![%link_list%
 	];
 
 	if let Ok(dpdk_path) = env::var("RTE_SDK") {
