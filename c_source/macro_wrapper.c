@@ -1,8 +1,4 @@
-%header_list%
-
-#define _GNU_SOURCE
-#include <sched.h>
-#undef _GNU_SOURCE
+#include "macro_wrapper.h"
 
 int macro_CPU_EQUAL(cpu_set_t * set1, cpu_set_t * set2)
 {

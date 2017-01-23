@@ -1,3 +1,5 @@
+extern crate gcc;
+
 use std::path::Path;
 use std::env;
 
@@ -21,4 +23,9 @@ fn main() {
 		println!("error: DPDK is not found");
 		std::process::exit(-1);
 	}
+
+	gcc::Config::new()
+                .file("c_source/macro_wrapper.c")
+                .include("c_header")
+                .compile("lib_c_macro_wrapper.a");
 }

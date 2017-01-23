@@ -95,7 +95,7 @@ class State:
             headers.append(item)
         headers.sort()
 
-        with open("dpdk.c.template", "r") as template:
+        with open("dpdk.h.template", "r") as template:
             template_string = template.read()
             headers_string = ""
             for header in headers:
@@ -103,7 +103,7 @@ class State:
 
             formatted = template_string.replace("%header_list%", headers_string)
 
-            with open("dpdk.c", "w") as f:
+            with open("dpdk.h", "w") as f:
                 f.write(formatted)
 
         return True
@@ -111,11 +111,13 @@ class State:
     def generate_rust_def(self):
         rust_src_path = Path("src").joinpath("dpdk.rs")
         dpdk_include_path = self.dpdk_path.joinpath("include")
+        c_include_path = Path("c_header")
         try:
-            subprocess.check_output(["bindgen", "dpdk.c", "--output", str(rust_src_path),
+            subprocess.check_output(["bindgen", "dpdk.h", "--output", str(rust_src_path),
                                      "--no-unstable-rust",
                                      "--",
                                      "-I{}".format(dpdk_include_path),
+                                     "-I{}".format(c_include_path),
                                      "-imacros", str(self.dpdk_config),
                                      "-march=native"])
             return True
