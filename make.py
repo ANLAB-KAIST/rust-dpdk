@@ -32,8 +32,38 @@ class State:
             path = Path(os.environ["RTE_SDK"])
         else:
             logging.info("RTE_SDK environment variable is not found")
-            path = Path(input("{}. Enter DPDK path (install directory): ".format(self.phase)).strip())
+            result = input("{}. Enter DPDK path (install directory, blank for automatic download): ".format(self.phase)).strip()
+            if result.len() == 0:
+                path = None
+            else:
+                path = Path(result)
             self.phase += 1
+
+        if path is None:
+            # Automatic download
+            try:
+                dir_path = Path("3rdparty")
+                dir_path.mkdir(exist_ok=True)
+                git_path = dir_path.joinpath("dpdk")
+                if not git_path.exists():
+                    subprocess.check_output(["git", "clone", "-b", "anlab",
+                                             "https://github.com/ANLAB-KAIST/dpdk",
+                                             str(git_path)])
+
+                environment = os.environ
+                environment["EXTRA_CFLAGS"] = "-fPIC"
+                subprocess.check_output(["make", "-C", str(git_path), "config", "T=anlab"],
+                                        env=environment)
+                subprocess.check_output(["make", "-C", str(git_path), "-j", "T=anlab"],
+                                        env=environment)
+                path = git_path.joinpath("build")
+            except OSError:
+                logging.error("Cannot clone DPDK git repo")
+            except subprocess.CalledProcessError:
+                logging.error("git did not exit correctly")
+        if path is None:
+            logging.error("Cannot prepare automatic download")
+            return False
 
         if not path.exists() and not path.is_dir():
             logging.error("Path {} does not exist".format(path))
