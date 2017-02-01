@@ -15,7 +15,7 @@ fn main() {
 			println!("cargo:rustc-link-search=native={}", path_string);
 
 			for link in &link_list {
-				println!("cargo:rustc-link-lib=static={}", link);
+				println!("cargo:rustc-link-lib={}", link);
 			}
 		}
 

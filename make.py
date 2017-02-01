@@ -89,14 +89,14 @@ class State:
         for item in lib_dir.iterdir():
             if not item.is_file():
                 continue
-            if item.suffix != ".a":
+            if item.suffix != ".a" and item.suffix != ".so":
                 continue
             if not item.name.startswith("librte_"):
                 continue
             libs.append(item)
         libs.sort()
 
-        format = re.compile(r"lib(.*)\.a")
+        format = re.compile(r"lib(.*)\.(a|so)")
         link_list = []
         for link in libs:
             result = format.match(link.name)
@@ -170,6 +170,30 @@ class State:
             formatted = template_string.replace("%link_list%", link_list)
             with rust_build_rs.open("w") as f:
                 f.write(formatted)
+        return True
+
+    def generate_lib_rs(self):
+        rust_lib_rs = Path("src").joinpath("lib.rs")
+        rust_lib_rs_template = Path("lib.rs.template")
+        lib_list = self.dpdk_links
+
+        format = re.compile(r"rte_pmd_(\w+)")
+        pmds = []
+        for link in lib_list:
+            result = format.match(link)
+            if result is not None:
+                pmds.append(result.group(1))
+
+        with rust_lib_rs_template.open("r") as template:
+            template_string = template.read()
+
+            pmd_list = ""
+            for link in pmds:
+                pmd_list += "\n\"{}\",".format(link)
+            formatted = template_string.replace("%pmd_list%", pmd_list)
+            with rust_lib_rs.open("w") as f:
+                f.write(formatted)
+        return True
 
 
 def main():
@@ -183,6 +207,8 @@ def main():
     if not state.generate_rust_def():
         return
     if not state.generate_build_rs():
+        return
+    if not state.generate_lib_rs():
         return
     pass
 

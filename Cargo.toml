@@ -21,4 +21,4 @@ gcc = "*"
 
 [lib]
 name = "dpdk"
-path = "src/dpdk.rs"
+path = "src/lib.rs"
