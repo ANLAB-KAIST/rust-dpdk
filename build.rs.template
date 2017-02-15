@@ -9,8 +9,8 @@ fn main() {
 	];
 
 	if let Ok(dpdk_path) = env::var("RTE_SDK") {
-		let path = Path::new(&dpdk_path);
-		let path = path.join("lib");
+		let root_path = Path::new(&dpdk_path);
+		let path = root_path.join("lib");
 		if let Some(path_string) = path.to_str() {
 			println!("cargo:rustc-link-search=native={}", path_string);
 
@@ -18,6 +18,17 @@ fn main() {
 				println!("cargo:rustc-link-lib={}", link);
 			}
 		}
+
+		let include_path = root_path.join("include");
+		gcc::Config::new()
+                .file("c_source/inline_wrapper.c")
+                .include(include_path)
+                .include("c_header")
+                .include(".")
+                .flag("-march=native")
+                .flag("-imacros")
+                .flag("%dpdk_config%")
+                .compile("lib_c_inline_wrapper.a");
 
 	} else {
 		println!("error: DPDK is not found");
@@ -27,5 +38,8 @@ fn main() {
 	gcc::Config::new()
                 .file("c_source/macro_wrapper.c")
                 .include("c_header")
+                .flag("-march=native")
+                .flag("-imacros")
+                .flag("%dpdk_config%")
                 .compile("lib_c_macro_wrapper.a");
 }

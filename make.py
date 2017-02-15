@@ -149,7 +149,8 @@ class State:
                                      "-I{}".format(dpdk_include_path),
                                      "-I{}".format(c_include_path),
                                      "-imacros", str(self.dpdk_config),
-                                     "-march=native"])
+                                     "-march=native",
+                                     ])
             return True
         except OSError:
             logging.error("Cannot execute bindgen program")
@@ -168,6 +169,7 @@ class State:
             for link in self.dpdk_links:
                 link_list += "\n\"{}\",".format(link)
             formatted = template_string.replace("%link_list%", link_list)
+            formatted = formatted.replace("%dpdk_config%", str(self.dpdk_config))
             with rust_build_rs.open("w") as f:
                 f.write(formatted)
         return True

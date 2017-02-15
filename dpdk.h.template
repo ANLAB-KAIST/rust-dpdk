@@ -1,3 +1,4 @@
 %header_list%
 
 #include "macro_wrapper.h"
+#include "inline_wrapper.h"
