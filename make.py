@@ -120,8 +120,8 @@ class State:
                 continue
             if not check_direct_include(item):
                 continue
-            if not item.stem in self.dpdk_links:
-                continue
+            #if not item.stem in self.dpdk_links:
+            #    continue
             headers.append(item)
         headers.sort()
 

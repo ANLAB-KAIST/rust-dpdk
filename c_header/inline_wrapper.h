@@ -10,3 +10,9 @@ void inline_rte_pktmbuf_free(struct rte_mbuf* m);
 struct rte_mbuf* inline_rte_pktmbuf_alloc(struct rte_mempool* mp);
 
 void* macro_rte_pktmbuf_mtod(struct rte_mbuf* pkt);
+
+uint64_t inline_rte_get_tsc_cycles(void);
+
+uint64_t inline_rte_get_timer_cycles (void);
+
+uint64_t inline_rte_get_timer_hz (void);
