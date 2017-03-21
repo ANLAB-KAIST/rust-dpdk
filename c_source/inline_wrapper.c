@@ -42,3 +42,28 @@ uint64_t inline_rte_get_timer_hz (void)
 {
     return rte_get_timer_hz();
 }
+
+void* macro_rte_pktmbuf_mtod_offset(struct rte_mbuf* pkt, size_t offset)
+{
+    return rte_pktmbuf_mtod_offset(pkt, void*, offset);
+}
+
+phys_addr_t macro_rte_pktmbuf_mtophys_offset(struct rte_mbuf* pkt, size_t offset)
+{
+    return rte_pktmbuf_mtophys_offset(pkt, offset);
+}
+
+phys_addr_t macro_rte_pktmbuf_mtophys(struct rte_mbuf* pkt)
+{
+    return rte_pktmbuf_mtophys(pkt);
+}
+
+size_t macro_rte_pktmbuf_pkt_len(struct rte_mbuf* pkt)
+{
+    return rte_pktmbuf_pkt_len(pkt);
+}
+
+size_t macro_rte_pktmbuf_data_len(struct rte_mbuf* pkt)
+{
+    return rte_pktmbuf_data_len(pkt);
+}
