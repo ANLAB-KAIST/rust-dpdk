@@ -1,6 +1,6 @@
 # rust-dpdk
 
-Tested with https://github.com/servo/rust-bindgen 7d995d75e07798c1527d5ea3dd8a647ed79fe209
+Tested with https://github.com/servo/rust-bindgen v0.20.0
 
 DPDK should be built with EXTRA_CFLAGS=-fPIC
 
