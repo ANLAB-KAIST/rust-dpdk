@@ -83,12 +83,12 @@ fn find_link_libs(state: &mut State) {
                 continue;
             }
 
-            if let Some(file_name) = path.file_name() {
-                let string = file_name.to_str().unwrap();
+            if let Some(file_stem) = path.file_stem() {
+                let string = file_stem.to_str().unwrap();
                 if !string.starts_with("librte_") {
                     continue;
                 }
-                libs.push(PathBuf::from(string));
+                libs.push(path.clone());
             } else {
                 continue;
             }
@@ -235,7 +235,7 @@ fn generate_lib_rs(state: &mut State) {
 
     let mut pmds = vec![];
     for link in &state.dpdk_links {
-        let link_name = link.file_name()
+        let link_name = link.file_stem()
             .unwrap()
             .to_str()
             .unwrap();
@@ -267,7 +267,11 @@ fn compile(state: &mut State) {
     println!("cargo:rustc-link-search=native={}",
              lib_path.to_str().unwrap());
     for link in &state.dpdk_links {
-        println!("cargo:rustc-link-lib={}", link.to_str().unwrap());
+        println!("cargo:rustc-link-lib={}",
+                 link.file_stem()
+                     .unwrap()
+                     .to_str()
+                     .unwrap());
     }
     let dpdk_include_path = dpdk_path.join("include");
     let c_include_path = project_path.join("c_header");
