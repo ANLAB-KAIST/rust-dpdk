@@ -106,7 +106,7 @@ fn check_direct_include(path: &Path) -> bool {
     }
     let file = File::open(path).unwrap();
     let reader = BufReader::new(&file);
-    for (num, line) in reader.lines().enumerate() {
+    for (_, line) in reader.lines().enumerate() {
         let line_str = line.ok()
             .unwrap()
             .trim()
