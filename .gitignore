@@ -3,5 +3,4 @@ src/dpdk.rs
 .idea
 Cargo.lock
 target
-build.rs
 3rdparty
