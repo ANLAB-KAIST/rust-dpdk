@@ -67,3 +67,83 @@ size_t macro_rte_pktmbuf_data_len(struct rte_mbuf* pkt)
 {
     return rte_pktmbuf_data_len(pkt);
 }
+
+void inline_rte_spinlock_init (rte_spinlock_t *sl)
+{
+	rte_spinlock_init(sl);
+}
+
+void inline_rte_spinlock_lock (rte_spinlock_t *sl)
+{
+	rte_spinlock_lock(sl);
+}
+
+void inline_rte_spinlock_unlock (rte_spinlock_t *sl)
+{
+	rte_spinlock_unlock(sl);
+}
+
+int inline_rte_spinlock_trylock (rte_spinlock_t *sl)
+{
+	return inline_rte_spinlock_trylock(sl);
+}
+
+int inline_rte_spinlock_is_locked (rte_spinlock_t *sl)
+{
+	return rte_spinlock_is_locked(sl);
+}
+
+int inline_rte_tm_supported (void)
+{
+	return rte_tm_supported();
+}
+
+void inline_rte_spinlock_lock_tm (rte_spinlock_t *sl)
+{
+	rte_spinlock_lock_tm(sl);
+}
+
+void inline_rte_spinlock_unlock_tm (rte_spinlock_t *sl)
+{
+	rte_spinlock_unlock_tm(sl);
+}
+
+int inline_rte_spinlock_trylock_tm (rte_spinlock_t *sl)
+{
+	return rte_spinlock_trylock_tm(sl);
+}
+
+void inline_rte_spinlock_recursive_init (rte_spinlock_recursive_t *slr)
+{
+	rte_spinlock_recursive_init(slr);
+}
+
+void inline_rte_spinlock_recursive_lock (rte_spinlock_recursive_t *slr)
+{
+	rte_spinlock_recursive_lock(slr);
+}
+
+void inline_rte_spinlock_recursive_unlock (rte_spinlock_recursive_t *slr)
+{
+	rte_spinlock_recursive_unlock(slr);
+}
+
+int inline_rte_spinlock_recursive_trylock (rte_spinlock_recursive_t *slr)
+{
+	return rte_spinlock_recursive_trylock(slr);
+}
+
+void inline_rte_spinlock_recursive_lock_tm (rte_spinlock_recursive_t *slr)
+{
+	rte_spinlock_recursive_lock_tm(slr);
+}
+
+void inline_rte_spinlock_recursive_unlock_tm (rte_spinlock_recursive_t *slr)
+{
+	rte_spinlock_recursive_unlock_tm(slr);
+}
+
+int inline_rte_spinlock_recursive_trylock_tm (rte_spinlock_recursive_t *slr)
+{
+	return rte_spinlock_recursive_trylock_tm(slr);
+}

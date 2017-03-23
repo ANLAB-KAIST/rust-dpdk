@@ -26,3 +26,20 @@ phys_addr_t macro_rte_pktmbuf_mtophys(struct rte_mbuf* pkt);
 size_t macro_rte_pktmbuf_pkt_len(struct rte_mbuf* pkt);
 
 size_t macro_rte_pktmbuf_data_len(struct rte_mbuf* pkt);
+
+void inline_rte_spinlock_init (rte_spinlock_t *sl);
+void inline_rte_spinlock_lock (rte_spinlock_t *sl);
+void inline_rte_spinlock_unlock (rte_spinlock_t *sl);
+int inline_rte_spinlock_trylock (rte_spinlock_t *sl);
+int inline_rte_spinlock_is_locked (rte_spinlock_t *sl);
+int inline_rte_tm_supported (void);
+void inline_rte_spinlock_lock_tm (rte_spinlock_t *sl);
+void inline_rte_spinlock_unlock_tm (rte_spinlock_t *sl);
+int inline_rte_spinlock_trylock_tm (rte_spinlock_t *sl);
+void inline_rte_spinlock_recursive_init (rte_spinlock_recursive_t *slr);
+void inline_rte_spinlock_recursive_lock (rte_spinlock_recursive_t *slr);
+void inline_rte_spinlock_recursive_unlock (rte_spinlock_recursive_t *slr);
+int inline_rte_spinlock_recursive_trylock (rte_spinlock_recursive_t *slr);
+void inline_rte_spinlock_recursive_lock_tm (rte_spinlock_recursive_t *slr);
+void inline_rte_spinlock_recursive_unlock_tm (rte_spinlock_recursive_t *slr);
+int inline_rte_spinlock_recursive_trylock_tm (rte_spinlock_recursive_t *slr);
