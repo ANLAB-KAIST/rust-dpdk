@@ -283,12 +283,15 @@ fn compile(state: &mut State) {
     let lib_path = dpdk_path.join("lib");
     println!("cargo:rustc-link-search=native={}",
              lib_path.to_str().unwrap());
+    let format = Regex::new(r"lib(.*)\.(a|so)").unwrap();
     for link in &state.dpdk_links {
-        println!("cargo:rustc-link-lib={}",
-                 link.file_stem()
-                     .unwrap()
-                     .to_str()
-                     .unwrap());
+        let link_name = link.file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        if let Some(capture) = format.captures(link_name) {
+            println!("cargo:rustc-link-lib={}", &capture[1]);
+        }
     }
     let dpdk_include_path = dpdk_path.join("include");
     let c_include_path = project_path.join("c_header");
