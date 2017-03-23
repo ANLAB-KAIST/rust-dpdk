@@ -43,3 +43,4 @@ int inline_rte_spinlock_recursive_trylock (rte_spinlock_recursive_t *slr);
 void inline_rte_spinlock_recursive_lock_tm (rte_spinlock_recursive_t *slr);
 void inline_rte_spinlock_recursive_unlock_tm (rte_spinlock_recursive_t *slr);
 int inline_rte_spinlock_recursive_trylock_tm (rte_spinlock_recursive_t *slr);
+void inline_rte_pause(void);

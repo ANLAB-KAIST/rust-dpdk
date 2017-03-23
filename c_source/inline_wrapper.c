@@ -85,7 +85,7 @@ void inline_rte_spinlock_unlock (rte_spinlock_t *sl)
 
 int inline_rte_spinlock_trylock (rte_spinlock_t *sl)
 {
-	return inline_rte_spinlock_trylock(sl);
+	return rte_spinlock_trylock(sl);
 }
 
 int inline_rte_spinlock_is_locked (rte_spinlock_t *sl)
@@ -146,4 +146,9 @@ void inline_rte_spinlock_recursive_unlock_tm (rte_spinlock_recursive_t *slr)
 int inline_rte_spinlock_recursive_trylock_tm (rte_spinlock_recursive_t *slr)
 {
 	return rte_spinlock_recursive_trylock_tm(slr);
+}
+
+void inline_rte_pause(void)
+{
+	rte_pause();
 }
