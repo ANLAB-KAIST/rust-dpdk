@@ -1,5 +1,5 @@
 extern crate gcc;
-extern crate bindgen;
+//extern crate bindgen;
 extern crate regex;
 
 use std::path::*;
@@ -205,6 +205,7 @@ fn generate_rust_def(state: &mut State) {
         .unwrap()
         .join("src")
         .join("dpdk.rs");
+    /*
     bindgen::builder()
         .header(header_path.to_str().unwrap())
         .no_unstable_rust()
@@ -217,6 +218,22 @@ fn generate_rust_def(state: &mut State) {
         .unwrap()
         .write_to_file(target_path)
         .ok();
+        */
+
+    //XXX replace with native bindgen package later
+    Command::new("bindgen")
+        .args(&[header_path.to_str().unwrap(),
+                "--output",
+                target_path.to_str().unwrap(),
+                "--no-unstable-rust",
+                "--",
+                &format!("-I{}", dpdk_include_path.to_str().unwrap()),
+                &format!("-I{}", c_include_path.to_str().unwrap()),
+                "-imacros",
+                dpdk_config_path.to_str().unwrap(),
+                "-march=native"])
+        .output()
+        .expect("failed to run bindgen command");
 }
 
 fn generate_lib_rs(state: &mut State) {

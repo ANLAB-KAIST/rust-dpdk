@@ -18,7 +18,7 @@ build = "build.rs"
 
 [build-dependencies]
 gcc = "*"
-bindgen = "0.20.0"
+#bindgen = "0.20.0"
 regex = "*"
 
 [lib]
