@@ -1,5 +1,5 @@
 extern crate gcc;
-//extern crate bindgen;
+extern crate bindgen;
 extern crate regex;
 
 use std::path::*;
@@ -50,11 +50,9 @@ fn find_dpdk(state: &mut State) {
 
         state.dpdk_path = Some(git_path.join("build"));
     }
-    assert!(state.dpdk_path
-                .clone()
-                .unwrap()
-                .exists());
-    let config_header = state.dpdk_path
+    assert!(state.dpdk_path.clone().unwrap().exists());
+    let config_header = state
+        .dpdk_path
         .clone()
         .unwrap()
         .join("include")
@@ -107,10 +105,7 @@ fn check_direct_include(path: &Path) -> bool {
     let file = File::open(path).unwrap();
     let reader = BufReader::new(&file);
     for (_, line) in reader.lines().enumerate() {
-        let line_str = line.ok()
-            .unwrap()
-            .trim()
-            .to_lowercase();
+        let line_str = line.ok().unwrap().trim().to_lowercase();
         if line_str.starts_with("#error") {
             if line_str.find("do not").is_some() && line_str.find("include").is_some() &&
                line_str.find("directly").is_some() {
@@ -122,10 +117,7 @@ fn check_direct_include(path: &Path) -> bool {
 }
 
 fn make_all_in_one_header(state: &mut State) {
-    let include_dir = state.dpdk_path
-        .clone()
-        .unwrap()
-        .join("include");
+    let include_dir = state.dpdk_path.clone().unwrap().join("include");
     let dpdk_config = state.dpdk_config.clone().unwrap();
     let mut headers = vec![];
     for entry in include_dir.read_dir().expect("read_dir failed") {
@@ -157,14 +149,12 @@ fn make_all_in_one_header(state: &mut State) {
     }
     headers.sort();
     state.dpdk_headers = headers;
-    let template_path = state.project_path
+    let template_path = state
+        .project_path
         .clone()
         .unwrap()
         .join("dpdk.h.template");
-    let target_path = state.project_path
-        .clone()
-        .unwrap()
-        .join("dpdk.h");
+    let target_path = state.project_path.clone().unwrap().join("dpdk.h");
     let mut template = File::open(template_path).unwrap();
     let mut target = File::create(target_path).unwrap();
 
@@ -174,38 +164,27 @@ fn make_all_in_one_header(state: &mut State) {
     let mut headers_string = String::new();
     for header in &state.dpdk_headers {
         headers_string += &format!("#include <{}>\n",
-                                   header.clone()
-                                       .file_name()
-                                       .unwrap()
-                                       .to_str()
-                                       .unwrap());
+                                   header.clone().file_name().unwrap().to_str().unwrap());
     }
     let formatted_string = template_string.replace("%header_list%", &headers_string);
 
-    target.write_fmt(format_args!("{}", formatted_string)).ok();
+    target
+        .write_fmt(format_args!("{}", formatted_string))
+        .ok();
 }
 
 fn generate_rust_def(state: &mut State) {
-    let dpdk_include_path = state.dpdk_path
-        .clone()
-        .unwrap()
-        .join("include");
-    let c_include_path = state.project_path
-        .clone()
-        .unwrap()
-        .join("c_header");
+    let dpdk_include_path = state.dpdk_path.clone().unwrap().join("include");
+    let c_include_path = state.project_path.clone().unwrap().join("c_header");
     let dpdk_config_path = state.dpdk_config.clone().unwrap();
 
-    let header_path = state.project_path
-        .clone()
-        .unwrap()
-        .join("dpdk.h");
-    let target_path = state.project_path
+    let header_path = state.project_path.clone().unwrap().join("dpdk.h");
+    let target_path = state
+        .project_path
         .clone()
         .unwrap()
         .join("src")
         .join("dpdk.rs");
-    /*
     bindgen::builder()
         .header(header_path.to_str().unwrap())
         .no_unstable_rust()
@@ -218,9 +197,9 @@ fn generate_rust_def(state: &mut State) {
         .unwrap()
         .write_to_file(target_path)
         .ok();
-        */
 
     //XXX replace with native bindgen package later
+/*
     Command::new("bindgen")
         .args(&[header_path.to_str().unwrap(),
                 "--output",
@@ -234,14 +213,18 @@ fn generate_rust_def(state: &mut State) {
                 "-march=native"])
         .output()
         .expect("failed to run bindgen command");
+*/
+
 }
 
 fn generate_lib_rs(state: &mut State) {
-    let template_path = state.project_path
+    let template_path = state
+        .project_path
         .clone()
         .unwrap()
         .join("lib.rs.template");
-    let target_path = state.project_path
+    let target_path = state
+        .project_path
         .clone()
         .unwrap()
         .join("src")
@@ -252,10 +235,7 @@ fn generate_lib_rs(state: &mut State) {
 
     let mut pmds = vec![];
     for link in &state.dpdk_links {
-        let link_name = link.file_stem()
-            .unwrap()
-            .to_str()
-            .unwrap();
+        let link_name = link.file_stem().unwrap().to_str().unwrap();
         if let Some(capture) = format.captures(link_name) {
             pmds.push(String::from(&capture[1]));
         }
@@ -272,7 +252,9 @@ fn generate_lib_rs(state: &mut State) {
 
     let formatted_string = template_string.replace("%pmd_list%", &pmds_string);
     let mut target = File::create(target_path).unwrap();
-    target.write_fmt(format_args!("{}", formatted_string)).ok();
+    target
+        .write_fmt(format_args!("{}", formatted_string))
+        .ok();
 }
 
 fn compile(state: &mut State) {
@@ -285,10 +267,7 @@ fn compile(state: &mut State) {
              lib_path.to_str().unwrap());
     let format = Regex::new(r"lib(.*)\.(a|so)").unwrap();
     for link in &state.dpdk_links {
-        let link_name = link.file_name()
-            .unwrap()
-            .to_str()
-            .unwrap();
+        let link_name = link.file_name().unwrap().to_str().unwrap();
         if let Some(capture) = format.captures(link_name) {
             println!("cargo:rustc-link-lib={}", &capture[1]);
         }
