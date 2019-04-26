@@ -1,6 +1,7 @@
-extern crate gcc;
+extern crate cc;
 extern crate bindgen;
 extern crate regex;
+extern crate num_cpus;
 
 use std::path::*;
 use std::env;
@@ -19,6 +20,7 @@ struct State {
 }
 
 fn find_dpdk(state: &mut State) {
+    let jobs_str = "-j{}".format(num_cpus::get());
     if let Ok(path_string) = env::var("RTE_SDK") {
         state.dpdk_path = Some(PathBuf::from(&path_string));
     } else {
@@ -33,18 +35,18 @@ fn find_dpdk(state: &mut State) {
             Command::new("git")
                 .args(&["clone",
                         "-b",
-                        "anlab",
-                        "https://github.com/ANLAB-KAIST/dpdk",
+                        "releases",
+                        "https://gitlab.kaist.ac.kr/3rdparty/dpdk",
                         git_path.to_str().unwrap()])
                 .output()
                 .expect("failed to run git command");
         }
         Command::new("make")
-            .args(&["-C", git_path.to_str().unwrap(), "config", "T=anlab_shared"])
+            .args(&["-C", git_path.to_str().unwrap(), "defconfig"])
             .output()
             .expect("failed to run make command");
         Command::new("make")
-            .args(&["-C", git_path.to_str().unwrap(), "-j", "T=anlab_shared"])
+            .args(&["-C", git_path.to_str().unwrap(), jobs_str])
             .output()
             .expect("failed to run make command");
 
@@ -275,7 +277,7 @@ fn compile(state: &mut State) {
     let dpdk_include_path = dpdk_path.join("include");
     let c_include_path = project_path.join("c_header");
     let c_source_path = project_path.join("c_source");
-    gcc::Config::new()
+    cc::Config::new()
         .file(c_source_path.join("inline_wrapper.c"))
         .include(&dpdk_include_path)
         .include(&c_include_path)
@@ -285,7 +287,7 @@ fn compile(state: &mut State) {
         .flag(dpdk_config.to_str().unwrap())
         .compile("lib_c_inline_wrapper.a");
 
-    gcc::Config::new()
+    cc::Config::new()
         .file(c_source_path.join("macro_wrapper.c"))
         .include(&c_include_path)
         .flag("-march=native")

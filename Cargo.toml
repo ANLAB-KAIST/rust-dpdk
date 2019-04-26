@@ -17,9 +17,10 @@ Rust binding for Intel DPDK (under construction).
 build = "build.rs"
 
 [build-dependencies]
-gcc = "*"
+cc = "*"
 bindgen = "0.20.0"
 regex = "*"
+num_cpus = "1.0"
 
 [lib]
 name = "dpdk"
