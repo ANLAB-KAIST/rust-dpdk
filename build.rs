@@ -20,12 +20,12 @@ struct State {
 }
 
 fn find_dpdk(state: &mut State) {
-    let jobs_str = "-j{}".format(num_cpus::get());
+    let jobs_str = format!("-j{}", num_cpus::get());
     let local_install_check = Path::new("/usr/local/include/dpdk/rte_config.h");
     if let Ok(path_string) = env::var("RTE_SDK") {
         state.dpdk_path = Some(PathBuf::from(&path_string));
     } else if local_install_check.exists() {
-        state.dpdk_path = Path::new("/usr/local/");
+        state.dpdk_path = Some(Path::new("/usr/local/"));
     } else {
         // Automatic download
         let dir_path = Path::new("3rdparty");
