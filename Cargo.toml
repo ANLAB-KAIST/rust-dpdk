@@ -8,13 +8,11 @@ homepage = "https://github.com/ANLAB-KAIST/rust-dpdk"
 repository = "https://github.com/ANLAB-KAIST/rust-dpdk"
 documentation = "https://github.com/ANLAB-KAIST/rust-dpdk"
 license = "BSD-3-Clause"
-keywords = ["rust", "dpdk", "binding"]
+keywords = ["rust", "dpdk", "binding", "bindgen"]
 
 description = """
 Rust binding for Intel DPDK (under construction).
 """
-
-build = "build.rs"
 
 [build-dependencies]
 cc = "*"
