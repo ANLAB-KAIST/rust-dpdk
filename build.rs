@@ -25,7 +25,7 @@ fn find_dpdk(state: &mut State) {
     if let Ok(path_string) = env::var("RTE_SDK") {
         state.dpdk_path = Some(PathBuf::from(&path_string));
     } else if local_install_check.exists() {
-        state.dpdk_path = Some(Path::new("/usr/local/"));
+        state.dpdk_path = Some(PathBuf::from("/usr/local/"));
     } else {
         // Automatic download
         let dir_path = Path::new("3rdparty");
