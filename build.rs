@@ -13,18 +13,19 @@ use regex::Regex;
 #[derive(Default)]
 struct State {
     project_path: Option<PathBuf>,
-    dpdk_path: Option<PathBuf>,
+    include_path: Option<PathBuf>,
+    library_path: Option<PathBuf>,
     dpdk_headers: Vec<PathBuf>,
     dpdk_links: Vec<PathBuf>,
     dpdk_config: Option<PathBuf>,
 }
 
 fn find_dpdk(state: &mut State) {
-    let jobs_str = format!("-j{}", num_cpus::get());
-    let local_install_check = Path::new("/usr/local/include/dpdk/rte_config.h");
     if let Ok(path_string) = env::var("RTE_SDK") {
-        state.dpdk_path = Some(PathBuf::from(&path_string));
-    } else if local_install_check.exists() {
+        let dpdk_path = Path::new(path_string);
+        state.include_path = Some(PathBuf::from(&path_string).join("include"));
+        state.library_path = Some(PathBuf::from(&path_string).join("lib"));
+    } else if Path::new("/usr/local/include/dpdk/rte_config.h").exists() {
         state.dpdk_path = Some(PathBuf::from("/usr/local/"));
     } else {
         // Automatic download
@@ -49,7 +50,7 @@ fn find_dpdk(state: &mut State) {
             .output()
             .expect("failed to run make command");
         Command::new("make")
-            .args(&["-C", git_path.to_str().unwrap(), jobs_str])
+            .args(&["-C", git_path.to_str().unwrap(), &format!("-j{}", num_cpus::get())])
             .output()
             .expect("failed to run make command");
 
