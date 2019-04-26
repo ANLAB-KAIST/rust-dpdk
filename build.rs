@@ -280,7 +280,7 @@ fn compile(state: &mut State) {
     let dpdk_include_path = dpdk_path.join("include");
     let c_include_path = project_path.join("c_header");
     let c_source_path = project_path.join("c_source");
-    cc::Config::new()
+    cc::Build::new()
         .file(c_source_path.join("inline_wrapper.c"))
         .include(&dpdk_include_path)
         .include(&c_include_path)
@@ -290,7 +290,7 @@ fn compile(state: &mut State) {
         .flag(dpdk_config.to_str().unwrap())
         .compile("lib_c_inline_wrapper.a");
 
-    cc::Config::new()
+    cc::Build::new()
         .file(c_source_path.join("macro_wrapper.c"))
         .include(&c_include_path)
         .flag("-march=native")
