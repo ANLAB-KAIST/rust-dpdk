@@ -1,3 +1,4 @@
+#include "rte_config.h"
 %header_list%
 
 #include "macro_wrapper.h"

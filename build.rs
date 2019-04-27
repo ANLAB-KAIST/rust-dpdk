@@ -163,21 +163,23 @@ fn make_all_in_one_header(state: &mut State) {
     assert!(headers.len() > 0);
 
     // Heuristically remove platform-specific headers
-    let name_set = vec![];
-    for file in headers {
-        let file_name = file.file_stem().unwrap().to_str().unwrap();
+    let mut name_set = vec![];
+    for file in &headers {
+        let file_name = String::from(file.file_stem().unwrap().to_str().unwrap());
         name_set.push(file_name);
     }
     let mut new_vec = vec![];
-    'outer: for file in headers {
+    'outer: for file in &headers {
         let file_name = file.file_stem().unwrap().to_str().unwrap();
-        for prev_name in name_set {
-            if file_name.starts_with(format!("{}_", prev_name)) {
+        println!("{}", file_name);
+        for prev_name in &name_set {
+            if file_name.starts_with(&format!("{}_", prev_name)) {
                 continue 'outer;
             }
         }
-        new_vec.push(file);
+        new_vec.push(file.clone());
     }
+
     new_vec.sort();
     headers = new_vec;
 
@@ -225,6 +227,7 @@ fn generate_rust_def(state: &mut State) {
         .clang_arg("-imacros")
         .clang_arg(dpdk_config_path.to_str().unwrap())
         .clang_arg("-march=native")
+        .rustfmt_bindings(true)
         .generate()
         .unwrap()
         .write_to_file(target_path)
