@@ -4,7 +4,7 @@ pipeline {
         stage ("Debian install") {
             agent {
                 dockerfile {
-                    filename 'Dockerfile.test'
+                    filename "Dockerfile.test"
                 }
             }
             stages {
@@ -28,7 +28,11 @@ pipeline {
             }
         }
         stage ("Manual install") {
-            agent { dockerfile true }
+            agent {
+                dockerfile {
+                    filename "Dockerfile"
+                }
+            }
             stages {
                 stage ("Version") {
                     steps {
