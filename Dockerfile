@@ -15,6 +15,8 @@ RUN make -j$(nproc) install
 # For rustup
 RUN apt install -y curl
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
-ENV PATH="/root/.cargo/.bin:${PATH}"
+ENV PATH="/root/.cargo/bin:${PATH}"
 
+# Recover env and verify
+WORKDIR /
 RUN rustup --version
