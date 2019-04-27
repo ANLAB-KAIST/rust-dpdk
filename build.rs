@@ -169,11 +169,11 @@ fn make_all_in_one_header(state: &mut State) {
         name_set.push(file_name);
     }
     let mut new_vec = vec![];
-    'outer': for file in headers {
+    'outer: for file in headers {
         let file_name = file.file_stem().unwrap().to_str().unwrap();
         for prev_name in name_set {
             if file_name.starts_with(format!("{}_", prev_name)) {
-                continue 'outer';
+                continue 'outer;
             }
         }
         new_vec.push(file);
