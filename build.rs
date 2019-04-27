@@ -271,9 +271,6 @@ fn generate_lib_rs(state: &mut State) {
 
 fn compile(state: &mut State) {
     let lib_path = state.library_path.clone().unwrap();
-    let dpdk_include_path = state.include_path.clone().unwrap();
-    let dpdk_config = state.dpdk_config.clone().unwrap();
-    let project_path = state.project_path.clone().unwrap();
     println!(
         "cargo:rustc-link-search=native={}",
         lib_path.to_str().unwrap()
