@@ -32,9 +32,6 @@ fn find_dpdk(state: &mut State) {
     } else if Path::new("/usr/local/include/dpdk/rte_config.h").exists() {
         state.include_path = Some(PathBuf::from("/usr/local/include/dpdk"));
         state.library_path = Some(PathBuf::from("/usr/local/lib"));
-    } else if Path::new("/usr/include/dpdk/rte_config.h").exists() {
-        state.include_path = Some(PathBuf::from("/usr/include/dpdk"));
-        state.library_path = Some(PathBuf::from("/usr/lib/x86_64-linux-gnu"));
     } else {
         // Automatic download
         let dir_path = Path::new("3rdparty");

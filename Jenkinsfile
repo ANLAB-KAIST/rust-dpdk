@@ -1,33 +1,6 @@
 pipeline {
     agent none
     stages {
-        stage ("Debian install") {
-            agent {
-                dockerfile {
-                    filename "Dockerfile.test"
-                }
-            }
-            stages {
-                stage ("Version") {
-                    steps {
-                        sh "cargo --version"
-                        sh "rustc --version"
-                        sh "rustup component add rustfmt"
-                    }
-                }
-                stage ("Check") {
-                    steps {
-                        sh "rustfmt --check build.rs src/test.rs"
-                    }
-                }
-                stage ("Build") {
-                    steps {
-                        sh "cargo build"
-                        sh "cargo run"
-                    }
-                }
-            }
-        }
         stage ("Manual install") {
             agent {
                 dockerfile {
