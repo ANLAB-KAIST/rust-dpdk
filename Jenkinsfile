@@ -32,6 +32,9 @@ pipeline {
             stages {
                 stage ("Version") {
                     steps {
+                        sh "whereis rustup"
+                        sh "whereis cargo"
+                        sh "ls -a /root/.cargo/bin"
                         sh "cargo --version"
                         sh "rustc --version"
                         sh "rustup component add rustfmt"
