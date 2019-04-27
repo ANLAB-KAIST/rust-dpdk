@@ -19,5 +19,7 @@ fn main() {
         argv.push(std::ptr::null_mut());
         let ret = dpdk::rte_eal_init(argc as c_int, argv.as_mut_ptr() as *mut *mut c_char);
         assert!(ret > 0);
+        let ret = dpdk::rte_eal_cleanup();
+        assert!(ret == 0);
     }
 }
