@@ -1,12 +1,5 @@
 # rust-dpdk
 
-Tested with https://github.com/servo/rust-bindgen v0.20.0
+[![Build Status](https://jenkins.leeopop.kr/buildStatus/icon?job=ANLAB-KAIST%2Frust-dpdk%2Fmaster)](https://jenkins.leeopop.kr/job/ANLAB-KAIST/job/rust-dpdk/job/master/)
 
-DPDK should be built with EXTRA_CFLAGS=-fPIC
-
-## How to use
-
-Run make.py with Python3.
-Then this project folder becomes a complete Cargo project.
-You can specify DPDK with manual input or RTE_SDK environment variable.
-It may automatically downloads DPDK if you put empty string at the prompt.
+Tested with https://github.com/rust-lang/rust-bindgen v0.47
