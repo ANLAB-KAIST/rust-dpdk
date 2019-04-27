@@ -22,11 +22,18 @@ struct State {
 
 fn find_dpdk(state: &mut State) {
     if let Ok(path_string) = env::var("RTE_SDK") {
-        let dpdk_path = Path::new(path_string);
-        state.include_path = Some(PathBuf::from(&path_string).join("include"));
-        state.library_path = Some(PathBuf::from(&path_string).join("lib"));
+        let mut dpdk_path = Path::new(path_string);
+        if let Ok(target_string) = env::var("RTE_TARGET") {
+            dpdk_path = dpdk_path.join(target_string);
+        } else {
+            dpdk_path = dpdk_path.join("build");
+        }
+        state.include_path = Some(dpdk_path.to_path_buf().join("include"));
+        state.library_path = Some(dpdk_path.to_path_buf().join("lib"));
     } else if Path::new("/usr/local/include/dpdk/rte_config.h").exists() {
         state.dpdk_path = Some(PathBuf::from("/usr/local/"));
+        state.include_path = Some(PathBuf::from("/usr/local/include/dpdk"));
+        state.library_path = Some(PathBuf::from("/usr/local/lib"));
     } else {
         // Automatic download
         let dir_path = Path::new("3rdparty");
@@ -55,21 +62,21 @@ fn find_dpdk(state: &mut State) {
             .expect("failed to run make command");
 
         state.dpdk_path = Some(git_path.join("build"));
+        state.include_path = Some(git_path.join("build").join("include"));
+        state.library_path = Some(git_path.join("build").join("lib"));
     }
     assert!(state.dpdk_path.clone().unwrap().exists());
     let config_header = state
-        .dpdk_path
+        .include_path
         .clone()
         .unwrap()
-        .join("include")
         .join("rte_config.h");
     assert!(config_header.exists());
     state.dpdk_config = Some(config_header);
 }
 
 fn find_link_libs(state: &mut State) {
-    let dpdk_path = state.dpdk_path.clone().unwrap();
-    let lib_dir = dpdk_path.join("lib");
+    let lib_dir = state.include_path.clone().unwrap().join("lib");
 
     let mut libs = vec![];
     for entry in lib_dir.read_dir().expect("read_dir failed") {
@@ -123,7 +130,7 @@ fn check_direct_include(path: &Path) -> bool {
 }
 
 fn make_all_in_one_header(state: &mut State) {
-    let include_dir = state.dpdk_path.clone().unwrap().join("include");
+    let include_dir = state.include_path.clone().unwrap();
     let dpdk_config = state.dpdk_config.clone().unwrap();
     let mut headers = vec![];
     for entry in include_dir.read_dir().expect("read_dir failed") {
@@ -180,7 +187,7 @@ fn make_all_in_one_header(state: &mut State) {
 }
 
 fn generate_rust_def(state: &mut State) {
-    let dpdk_include_path = state.dpdk_path.clone().unwrap().join("include");
+    let dpdk_include_path = state.include_path.clone().unwrap();
     let c_include_path = state.project_path.clone().unwrap().join("c_header");
     let dpdk_config_path = state.dpdk_config.clone().unwrap();
 
@@ -203,24 +210,6 @@ fn generate_rust_def(state: &mut State) {
         .unwrap()
         .write_to_file(target_path)
         .ok();
-
-    //XXX replace with native bindgen package later
-/*
-    Command::new("bindgen")
-        .args(&[header_path.to_str().unwrap(),
-                "--output",
-                target_path.to_str().unwrap(),
-                "--no-unstable-rust",
-                "--",
-                &format!("-I{}", dpdk_include_path.to_str().unwrap()),
-                &format!("-I{}", c_include_path.to_str().unwrap()),
-                "-imacros",
-                dpdk_config_path.to_str().unwrap(),
-                "-march=native"])
-        .output()
-        .expect("failed to run bindgen command");
-*/
-
 }
 
 fn generate_lib_rs(state: &mut State) {
