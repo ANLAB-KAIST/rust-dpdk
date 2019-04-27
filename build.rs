@@ -1,14 +1,14 @@
-extern crate cc;
 extern crate bindgen;
-extern crate regex;
+extern crate cc;
 extern crate num_cpus;
+extern crate regex;
 
-use std::path::*;
+use regex::Regex;
 use std::env;
-use std::process::Command;
 use std::fs::*;
 use std::io::*;
-use regex::Regex;
+use std::path::*;
+use std::process::Command;
 
 #[derive(Default)]
 struct State {
@@ -43,11 +43,13 @@ fn find_dpdk(state: &mut State) {
         let git_path = dir_path.join("dpdk");
         if !git_path.exists() {
             Command::new("git")
-                .args(&["clone",
-                        "-b",
-                        "releases",
-                        "https://gitlab.kaist.ac.kr/3rdparty/dpdk",
-                        git_path.to_str().unwrap()])
+                .args(&[
+                    "clone",
+                    "-b",
+                    "releases",
+                    "https://gitlab.kaist.ac.kr/3rdparty/dpdk",
+                    git_path.to_str().unwrap(),
+                ])
                 .output()
                 .expect("failed to run git command");
         }
@@ -56,7 +58,11 @@ fn find_dpdk(state: &mut State) {
             .output()
             .expect("failed to run make command");
         Command::new("make")
-            .args(&["-C", git_path.to_str().unwrap(), &format!("-j{}", num_cpus::get())])
+            .args(&[
+                "-C",
+                git_path.to_str().unwrap(),
+                &format!("-j{}", num_cpus::get()),
+            ])
             .output()
             .expect("failed to run make command");
 
@@ -65,11 +71,7 @@ fn find_dpdk(state: &mut State) {
     }
     assert!(state.include_path.clone().unwrap().exists());
     assert!(state.library_path.clone().unwrap().exists());
-    let config_header = state
-        .include_path
-        .clone()
-        .unwrap()
-        .join("rte_config.h");
+    let config_header = state.include_path.clone().unwrap().join("rte_config.h");
     assert!(config_header.exists());
     state.dpdk_config = Some(config_header);
 }
@@ -119,8 +121,10 @@ fn check_direct_include(path: &Path) -> bool {
     for (_, line) in reader.lines().enumerate() {
         let line_str = line.ok().unwrap().trim().to_lowercase();
         if line_str.starts_with("#error") {
-            if line_str.find("do not").is_some() && line_str.find("include").is_some() &&
-               line_str.find("directly").is_some() {
+            if line_str.find("do not").is_some()
+                && line_str.find("include").is_some()
+                && line_str.find("directly").is_some()
+            {
                 return false;
             }
         }
@@ -134,7 +138,6 @@ fn make_all_in_one_header(state: &mut State) {
     let mut headers = vec![];
     for entry in include_dir.read_dir().expect("read_dir failed") {
         if let Ok(entry) = entry {
-
             let path = entry.path();
 
             if !path.is_file() {
@@ -184,11 +187,7 @@ fn make_all_in_one_header(state: &mut State) {
     headers = new_vec;
 
     state.dpdk_headers = headers;
-    let template_path = state
-        .project_path
-        .clone()
-        .unwrap()
-        .join("dpdk.h.template");
+    let template_path = state.project_path.clone().unwrap().join("dpdk.h.template");
     let target_path = state.project_path.clone().unwrap().join("dpdk.h");
     let mut template = File::open(template_path).unwrap();
     let mut target = File::create(target_path).unwrap();
@@ -198,14 +197,14 @@ fn make_all_in_one_header(state: &mut State) {
 
     let mut headers_string = String::new();
     for header in &state.dpdk_headers {
-        headers_string += &format!("#include <{}>\n",
-                                   header.clone().file_name().unwrap().to_str().unwrap());
+        headers_string += &format!(
+            "#include <{}>\n",
+            header.clone().file_name().unwrap().to_str().unwrap()
+        );
     }
     let formatted_string = template_string.replace("%header_list%", &headers_string);
 
-    target
-        .write_fmt(format_args!("{}", formatted_string))
-        .ok();
+    target.write_fmt(format_args!("{}", formatted_string)).ok();
 }
 
 fn generate_rust_def(state: &mut State) {
@@ -236,18 +235,13 @@ fn generate_rust_def(state: &mut State) {
 }
 
 fn generate_lib_rs(state: &mut State) {
-    let template_path = state
-        .project_path
-        .clone()
-        .unwrap()
-        .join("lib.rs.template");
+    let template_path = state.project_path.clone().unwrap().join("lib.rs.template");
     let target_path = state
         .project_path
         .clone()
         .unwrap()
         .join("src")
         .join("lib.rs");
-
 
     let format = Regex::new(r"rte_pmd_(\w+)").unwrap();
 
@@ -270,19 +264,18 @@ fn generate_lib_rs(state: &mut State) {
 
     let formatted_string = template_string.replace("%pmd_list%", &pmds_string);
     let mut target = File::create(target_path).unwrap();
-    target
-        .write_fmt(format_args!("{}", formatted_string))
-        .ok();
+    target.write_fmt(format_args!("{}", formatted_string)).ok();
 }
 
 fn compile(state: &mut State) {
-
     let lib_path = state.library_path.clone().unwrap();
     let dpdk_include_path = state.include_path.clone().unwrap();
     let dpdk_config = state.dpdk_config.clone().unwrap();
     let project_path = state.project_path.clone().unwrap();
-    println!("cargo:rustc-link-search=native={}",
-             lib_path.to_str().unwrap());
+    println!(
+        "cargo:rustc-link-search=native={}",
+        lib_path.to_str().unwrap()
+    );
     let format = Regex::new(r"lib(.*)\.(a|so)").unwrap();
     for link in &state.dpdk_links {
         let link_name = link.file_name().unwrap().to_str().unwrap();
@@ -290,7 +283,7 @@ fn compile(state: &mut State) {
             println!("cargo:rustc-link-lib={}", &capture[1]);
         }
     }
-    
+
     let c_include_path = project_path.join("c_header");
     let c_source_path = project_path.join("c_source");
     cc::Build::new()
