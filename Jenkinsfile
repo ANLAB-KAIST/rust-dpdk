@@ -32,6 +32,10 @@ pipeline {
             stages {
                 stage ("Version") {
                     steps {
+                        sh "ls -a /"
+                        sh "ls -a /root"
+                        sh "ls -a /root/.cargo"
+                        sh "sync && sleep 1"
                         sh "whereis rustup"
                         sh "whereis cargo"
                         sh "ls -a /root/.cargo/bin"
