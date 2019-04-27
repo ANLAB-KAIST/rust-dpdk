@@ -227,6 +227,7 @@ fn generate_rust_def(state: &mut State) {
         .clang_arg("-imacros")
         .clang_arg(dpdk_config_path.to_str().unwrap())
         .clang_arg("-march=native")
+        .clang_arg("-Wno-everything")
         .rustfmt_bindings(true)
         .generate()
         .unwrap()
