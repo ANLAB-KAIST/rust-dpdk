@@ -1,5 +1,9 @@
+#![allow(warnings)]
 mod dpdk;
 pub use dpdk::*;
+
+#[cfg(test)]
+mod test;
 
 pub fn pmd_list() -> Vec<String> {
 let str_vec = vec![%pmd_list%

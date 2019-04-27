@@ -1,6 +1,8 @@
+.idea/
+.vscode/
+
 dpdk.h
 src/dpdk.rs
-.idea
 Cargo.lock
-target
-3rdparty
+target/
+3rdparty/
