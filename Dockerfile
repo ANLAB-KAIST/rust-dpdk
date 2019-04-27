@@ -11,7 +11,6 @@ RUN make defconfig
 RUN make -j$(nproc)
 RUN make -j$(nproc) install
 
-
 # For rustup
 RUN apt install -y curl
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
@@ -22,4 +21,6 @@ WORKDIR /
 RUN rustup --version
 
 # For rust-dpdk
-RUN apt install -y libclang-dev
+# We need both clang and libclang to work with
+# https://bugs.launchpad.net/ubuntu/+source/llvm-defaults/+bug/1242300
+RUN apt install -y libclang-dev clang
