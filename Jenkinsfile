@@ -50,10 +50,11 @@ pipeline {
             }
         }
         stage ("Manual install (env)") {
-            agent { dockerfile true }
-            environment {
-                RTE_SDK = '/dpdk'
-                RTE_TARGET = 'build'
+            agent {
+                dockerfile {
+                    filename "Dockerfile"
+                    args "--env-file=.env_test"
+                }
             }
             stages {
                 stage ("Version") {

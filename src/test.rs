@@ -1,7 +1,7 @@
 #[test]
 fn test_eal_init() {
     unsafe {
-        std::os::raw::*;
+        use std::os::raw::*;
         use std::ffi;
 		dpdk::rte_set_log_level(dpdk::RTE_LOG_DEBUG);
 
