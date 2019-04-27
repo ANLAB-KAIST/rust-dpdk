@@ -1,8 +1,11 @@
-#[test]
-fn test_eal_init() {
+extern crate dpdk;
+use std::os::raw::*;
+use std::ffi;
+use std::mem;
+
+fn main() {
     unsafe {
-        use std::os::raw::*;
-        use std::ffi;
+        
 		dpdk::rte_set_log_level(dpdk::RTE_LOG_DEBUG);
 
 		let args = Vec::from_iter(env::args().into_iter());

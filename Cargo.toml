@@ -22,3 +22,7 @@ regex = "1"
 [lib]
 name = "dpdk"
 path = "src/lib.rs"
+
+[[bin]]
+name = "dpdk_test"
+path = "src/test.rs"
