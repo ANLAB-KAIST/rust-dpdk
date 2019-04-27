@@ -1,5 +1,4 @@
 extern crate bindgen;
-extern crate cc;
 extern crate num_cpus;
 extern crate regex;
 
@@ -286,24 +285,6 @@ fn compile(state: &mut State) {
             println!("cargo:rustc-link-lib={}", &capture[1]);
         }
     }
-
-    let c_include_path = project_path.join("c_header");
-    let c_source_path = project_path.join("c_source");
-    cc::Build::new()
-        .file(c_source_path.join("inline_wrapper.c"))
-        .include(&dpdk_include_path)
-        .include(&c_include_path)
-        .include(&project_path)
-        .flag("-march=native")
-        .flag("-imacros")
-        .flag(dpdk_config.to_str().unwrap())
-        .compile("lib_c_inline_wrapper.a");
-
-    cc::Build::new()
-        .file(c_source_path.join("macro_wrapper.c"))
-        .include(&c_include_path)
-        .flag("-march=native")
-        .compile("lib_c_macro_wrapper.a");
 }
 fn main() {
     let mut state: State = Default::default();
