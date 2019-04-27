@@ -7,19 +7,18 @@ use std::os::raw::*;
 fn main() {
     unsafe {
         let args: Vec<String> = env::args().collect();
-        let args = vec![
-            args[0].clone(),
-            String::from("--no-pci"),
-            String::from("--no-huge"),
+        let mut args = vec![
+            ffi::CString::new(args[0].clone()).unwrap(),
+            ffi::CString::new("--no-pci").unwrap(),
+            ffi::CString::new("--no-huge").unwrap(),
         ];
         let argc = args.len();
-        let mut argv: Vec<*const c_char> = vec![];
-        for arg in args {
-            let arg = ffi::CString::new(arg).unwrap();
-            argv.push(mem::transmute(arg.into_bytes_with_nul().as_ptr()));
+        let mut argv: Vec<*mut c_char> = vec![];
+        for arg in &mut args {
+            argv.push(arg.as_bytes_with_nul().as_ptr() as *mut c_char);
         }
-        argv.push(std::ptr::null());
+        argv.push(std::ptr::null_mut());
         let ret = dpdk::rte_eal_init(argc as c_int, argv.as_mut_ptr() as *mut *mut c_char);
-        assert!(ret == 0);
+        assert!(ret > 0);
     }
 }

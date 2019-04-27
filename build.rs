@@ -282,6 +282,10 @@ fn compile(state: &mut State) {
             println!("cargo:rustc-link-lib={}", &capture[1]);
         }
     }
+    let additional_libs = vec!["numa"];
+    for lib in &additional_libs {
+        println!("cargo:rustc-link-lib={}", lib);
+    }
 }
 fn main() {
     let mut state: State = Default::default();
