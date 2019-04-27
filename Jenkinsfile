@@ -23,6 +23,7 @@ pipeline {
                 stage ("Build") {
                     steps {
                         sh "cargo build"
+                        sh "cargo run"
                     }
                 }
             }
@@ -49,6 +50,7 @@ pipeline {
                 stage ("Build") {
                     steps {
                         sh "cargo build"
+                        sh "cargo run"
                     }
                 }
             }
@@ -76,6 +78,7 @@ pipeline {
                 stage ("Build") {
                     steps {
                         sh "cargo build"
+                        sh "cargo run"
                     }
                 }
             }
