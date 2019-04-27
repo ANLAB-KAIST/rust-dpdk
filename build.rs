@@ -199,7 +199,6 @@ fn generate_rust_def(state: &mut State) {
         .join("dpdk.rs");
     bindgen::builder()
         .header(header_path.to_str().unwrap())
-        .no_unstable_rust()
         .clang_arg(format!("-I{}", dpdk_include_path.to_str().unwrap()))
         .clang_arg(format!("-I{}", c_include_path.to_str().unwrap()))
         .clang_arg("-imacros")
