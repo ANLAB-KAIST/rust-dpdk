@@ -31,7 +31,6 @@ fn find_dpdk(state: &mut State) {
         state.include_path = Some(dpdk_path.to_path_buf().join("include"));
         state.library_path = Some(dpdk_path.to_path_buf().join("lib"));
     } else if Path::new("/usr/local/include/dpdk/rte_config.h").exists() {
-        state.dpdk_path = Some(PathBuf::from("/usr/local/"));
         state.include_path = Some(PathBuf::from("/usr/local/include/dpdk"));
         state.library_path = Some(PathBuf::from("/usr/local/lib"));
     } else {
@@ -61,11 +60,11 @@ fn find_dpdk(state: &mut State) {
             .output()
             .expect("failed to run make command");
 
-        state.dpdk_path = Some(git_path.join("build"));
         state.include_path = Some(git_path.join("build").join("include"));
         state.library_path = Some(git_path.join("build").join("lib"));
     }
-    assert!(state.dpdk_path.clone().unwrap().exists());
+    assert!(state.include_path.clone().unwrap().exists());
+    assert!(state.library_path.clone().unwrap().exists());
     let config_header = state
         .include_path
         .clone()
@@ -254,10 +253,10 @@ fn generate_lib_rs(state: &mut State) {
 
 fn compile(state: &mut State) {
 
-    let dpdk_path = state.dpdk_path.clone().unwrap();
+    let lib_path = state.library_path.clone().unwrap();
+    let dpdk_include_path = state.include_path.clone().unwrap();
     let dpdk_config = state.dpdk_config.clone().unwrap();
     let project_path = state.project_path.clone().unwrap();
-    let lib_path = dpdk_path.join("lib");
     println!("cargo:rustc-link-search=native={}",
              lib_path.to_str().unwrap());
     let format = Regex::new(r"lib(.*)\.(a|so)").unwrap();
@@ -267,7 +266,7 @@ fn compile(state: &mut State) {
             println!("cargo:rustc-link-lib={}", &capture[1]);
         }
     }
-    let dpdk_include_path = dpdk_path.join("include");
+    
     let c_include_path = project_path.join("c_header");
     let c_source_path = project_path.join("c_source");
     cc::Build::new()
