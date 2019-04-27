@@ -11,8 +11,10 @@ RUN make defconfig
 RUN make -j$(nproc)
 RUN make -j$(nproc) install
 
-# For rustup
 WORKDIR /
+RUN rm -rf /dpdk
+
+# For rustup
 RUN apt install -y curl
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
