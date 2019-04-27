@@ -34,7 +34,7 @@ fn find_dpdk(state: &mut State) {
         state.library_path = Some(PathBuf::from("/usr/local/lib"));
     } else if Path::new("/usr/include/dpdk/rte_config.h").exists() {
         state.include_path = Some(PathBuf::from("/usr/include/dpdk"));
-        state.library_path = Some(PathBuf::from("/usr/lib"));
+        state.library_path = Some(PathBuf::from("/usr/lib/x86_64-linux-gnu"));
     } else {
         // Automatic download
         let dir_path = Path::new("3rdparty");
@@ -111,6 +111,7 @@ fn find_link_libs(state: &mut State) {
         }
     }
     libs.sort();
+    libs.dedup();
     state.dpdk_links = libs;
 }
 
@@ -165,6 +166,7 @@ fn make_all_in_one_header(state: &mut State) {
         }
     }
     headers.sort();
+    headers.dedup();
     assert!(headers.len() > 0);
 
     // Heuristically remove platform-specific headers
@@ -186,6 +188,7 @@ fn make_all_in_one_header(state: &mut State) {
     }
 
     new_vec.sort();
+    new_vec.dedup();
     headers = new_vec;
 
     state.dpdk_headers = headers;
