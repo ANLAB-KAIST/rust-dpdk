@@ -22,14 +22,14 @@ struct State {
 
 fn find_dpdk(state: &mut State) {
     if let Ok(path_string) = env::var("RTE_SDK") {
-        let mut dpdk_path = Path::new(path_string);
+        let mut dpdk_path = PathBuf::from(path_string);
         if let Ok(target_string) = env::var("RTE_TARGET") {
             dpdk_path = dpdk_path.join(target_string);
         } else {
             dpdk_path = dpdk_path.join("build");
         }
-        state.include_path = Some(dpdk_path.to_path_buf().join("include"));
-        state.library_path = Some(dpdk_path.to_path_buf().join("lib"));
+        state.include_path = Some(dpdk_path.join("include"));
+        state.library_path = Some(dpdk_path.join("lib"));
     } else if Path::new("/usr/local/include/dpdk/rte_config.h").exists() {
         state.include_path = Some(PathBuf::from("/usr/local/include/dpdk"));
         state.library_path = Some(PathBuf::from("/usr/local/lib"));
