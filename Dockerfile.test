@@ -2,4 +2,3 @@ FROM rust:latest
 
 RUN apt update -y && apt dist-upgrade -y && apt autoremove -y && apt autoclean -y
 RUN apt install -y dpdk-dev libclang-dev clang
-RUN rustup update
