@@ -75,7 +75,7 @@ fn find_dpdk(state: &mut State) {
 }
 
 fn find_link_libs(state: &mut State) {
-    let lib_dir = state.include_path.clone().unwrap().join("lib");
+    let lib_dir = state.library_path.clone().unwrap();
 
     let mut libs = vec![];
     for entry in lib_dir.read_dir().expect("read_dir failed") {
