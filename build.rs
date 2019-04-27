@@ -163,28 +163,20 @@ fn make_all_in_one_header(state: &mut State) {
     assert!(headers.len() > 0);
 
     // Heuristically remove platform-specific headers
-    let name_set = vec!["bpf_def", "cmdline"];
-    let format = Regex::new(r"(rte_.+)\.h").unwrap();
-    for name in headers {
-        if let Some(capture) = format.captures(name) {
-            name_set.push(String::from(&capture[1]));
-        } else {
-            continue;
-        }
+    let name_set = vec![];
+    for file in headers {
+        let file_name = file.file_stem().unwrap().to_str().unwrap();
+        name_set.push(file_name);
     }
     let mut new_vec = vec![];
-    'outer': for name in headers {
-        if let Some(capture) = format.captures(name) {
-            let pure_name = String::from(&capture[1]);
-            for prev_name in name_set {
-                if pure_name.starts_with(prev_name) && pure_name.len() > prev_name.len() {
-                    continue 'outer';
-                }
+    'outer': for file in headers {
+        let file_name = file.file_stem().unwrap().to_str().unwrap();
+        for prev_name in name_set {
+            if file_name.starts_with(format!("{}_", prev_name)) {
+                continue 'outer';
             }
-        } else {
-            continue;
         }
-        new_vec.push(name);
+        new_vec.push(file);
     }
     new_vec.sort();
     headers = new_vec;
