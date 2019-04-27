@@ -17,7 +17,7 @@ pipeline {
                 }
                 stage ("Check") {
                     steps {
-                        sh "rustfmt --check build.rs"
+                        sh "rustfmt --check build.rs src/test.rs"
                     }
                 }
                 stage ("Build") {
@@ -44,7 +44,7 @@ pipeline {
                 }
                 stage ("Check") {
                     steps {
-                        sh "rustfmt --check build.rs"
+                        sh "rustfmt --check build.rs src/test.rs"
                     }
                 }
                 stage ("Build") {
@@ -72,7 +72,7 @@ pipeline {
                 }
                 stage ("Check") {
                     steps {
-                        sh "rustfmt --check build.rs"
+                        sh "rustfmt --check build.rs src/test.rs"
                     }
                 }
                 stage ("Build") {
