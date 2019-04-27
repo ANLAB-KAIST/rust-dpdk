@@ -1,7 +1,7 @@
 FROM debian:latest
 
 RUN apt update -y && apt dist-upgrade -y && apt autoremove -y && apt autoclean -y
-RUN apt install -y build-essential linux-headers-amd64 libnuma-dev git
+RUN apt install -y build-essential linux-headers-amd64 libnuma-dev git libclang-dev
 
 RUN git clone -b releases "https://gitlab.kaist.ac.kr/3rdparty/dpdk" /dpdk
 
