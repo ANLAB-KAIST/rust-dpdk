@@ -6,10 +6,12 @@ use std::os::raw::*;
 
 fn main() {
     unsafe {
-        dpdk::rte_set_log_level(dpdk::RTE_LOG_DEBUG);
-
-        let args = Vec::from_iter(env::args().into_iter());
-        let args = vec![args[0], "--no-pci", "--no-huge"];
+        let args: Vec<String> = env::args().collect();
+        let args = vec![
+            args[0].clone(),
+            String::from("--no-pci"),
+            String::from("--no-huge"),
+        ];
         let argc = args.len();
         let mut argv: Vec<*const c_char> = vec![];
         for arg in args {
