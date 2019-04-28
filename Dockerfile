@@ -7,9 +7,9 @@ RUN git clone -b releases "https://gitlab.kaist.ac.kr/3rdparty/dpdk" /dpdk
 
 WORKDIR /dpdk
 
-RUN make defconfig
-RUN make -j$(nproc)
-RUN make -j$(nproc) install
+RUN EXTRA_CFLAGS=-fkeep-inline-functions make defconfig
+RUN EXTRA_CFLAGS=-fkeep-inline-functions make -j$(nproc)
+RUN EXTRA_CFLAGS=-fkeep-inline-functions make -j$(nproc) install
 
 WORKDIR /
 RUN rm -rf /dpdk
