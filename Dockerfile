@@ -15,9 +15,9 @@ WORKDIR /
 RUN rm -rf /dpdk
 
 # For rustup
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+ENV PATH=/usr/local/cargo/bin:$PATH
 RUN apt install -y curl
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y --no-modify-path
 RUN chmod -R a+w ${RUSTUP_HOME} ${CARGO_HOME}
