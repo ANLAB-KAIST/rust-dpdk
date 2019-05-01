@@ -283,9 +283,12 @@ fn generate_static_impl(state: &mut State) {
             if let Some(args) = f.get_arguments() {
                 let mut counter = 0;
                 for arg in &args {
+                    let arg_name = arg
+                        .get_display_name()
+                        .unwrap_or(format!("_unnamed_arg{}", counter).to_string());
                     let type_ = arg.get_type().unwrap();
-                    arg_string += &format!("{}, ", format_arg(type_, format!("arg{}", counter)));
-                    param_string += &format!("arg{}, ", counter);
+                    arg_string += &format!("{}, ", format_arg(type_, arg_name.clone()));
+                    param_string += &format!("{}, ", arg_name);
                     counter += 1;
                 }
                 arg_string = arg_string.trim_end_matches(", ").to_string();
