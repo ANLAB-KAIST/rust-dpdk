@@ -2,6 +2,8 @@
 mod dpdk;
 pub use dpdk::*;
 
+%static_use_defs%
+
 pub fn pmd_list() -> Vec<String> {
 let str_vec = vec![%pmd_list%
 ];

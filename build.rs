@@ -1,4 +1,6 @@
 extern crate bindgen;
+extern crate cc;
+extern crate clang;
 extern crate num_cpus;
 extern crate regex;
 
@@ -17,7 +19,10 @@ struct State {
     dpdk_headers: Vec<PathBuf>,
     dpdk_links: Vec<PathBuf>,
     dpdk_config: Option<PathBuf>,
+    static_functions: Vec<String>,
 }
+
+const STATIC_PREFIX: &'static str = "static_8a9f682d_";
 
 fn find_dpdk(state: &mut State) {
     if let Ok(path_string) = env::var("RTE_SDK") {
@@ -209,22 +214,128 @@ fn make_all_in_one_header(state: &mut State) {
     target.write_fmt(format_args!("{}", formatted_string)).ok();
 }
 
+fn generate_static_impl(state: &mut State) {
+    let clang = clang::Clang::new().unwrap();
+
+    let index = clang::Index::new(&clang, false, false);
+
+    let trans_unit = index
+        .parser("dpdk.h")
+        .arguments(&[
+            format!(
+                "-I{}",
+                state.include_path.clone().unwrap().to_str().unwrap()
+            )
+            .to_string(),
+            String::from("-imacros"),
+            state
+                .dpdk_config
+                .clone()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string(),
+        ])
+        .parse()
+        .unwrap();
+
+    let mut static_def_list = vec![];
+    let mut static_impl_list = vec![];
+
+    fn format_arg(type_: clang::Type, name: String) -> String {
+        match type_.get_kind() {
+            clang::TypeKind::DependentSizedArray | clang::TypeKind::VariableArray => {
+                panic!("Not supported (DependentSizedArray");
+            }
+            clang::TypeKind::ConstantArray => {
+                let elem_type = type_.get_element_type().unwrap();
+                let array_size = type_.get_size().unwrap();
+                let name = name + &format!("[{}]", array_size);
+                return format_arg(elem_type, name);
+            }
+            clang::TypeKind::IncompleteArray => {
+                let elem_type = type_.get_element_type().unwrap();
+                let name = name + "[]";
+                return format_arg(elem_type, name);
+            }
+            _ => {
+                return format!("{} {}", type_.get_display_name().to_string(), name);
+            }
+        }
+    }
+
+    for f in trans_unit
+        .get_entity()
+        .get_children()
+        .into_iter()
+        .filter(|e| e.get_kind() == clang::EntityKind::FunctionDecl)
+    {
+        let name_ = f.get_name();
+        let storage_ = f.get_storage_class();
+        let return_type_ = f.get_result_type();
+        let is_decl = f.is_definition();
+        if let (Some(clang::StorageClass::Static), Some(return_type), Some(name), true) =
+            (storage_, return_type_, name_, is_decl)
+        {
+            let mut arg_string = String::from("");
+            let mut param_string = String::from("");
+            let return_type_string = return_type.get_display_name();
+            if let Some(args) = f.get_arguments() {
+                let mut counter = 0;
+                for arg in &args {
+                    let type_ = arg.get_type().unwrap();
+                    arg_string += &format!("{}, ", format_arg(type_, format!("arg{}", counter)));
+                    param_string += &format!("arg{}, ", counter);
+                    counter += 1;
+                }
+                arg_string = arg_string.trim_end_matches(", ").to_string();
+                param_string = param_string.trim_end_matches(", ").to_string();
+            }
+            static_def_list.push(format!(
+                "{ret} {prefix}{name} ({args})",
+                ret = return_type_string,
+                prefix = STATIC_PREFIX,
+                name = name,
+                args = arg_string
+            ));
+            static_impl_list.push(format!(
+                "{{ return {name}({params}); }}",
+                name = name,
+                params = param_string
+            ));
+            state.static_functions.push(name.clone());
+        }
+    }
+
+    let header_path = state.project_path.clone().unwrap().join("static.h");
+    let source_path = state.project_path.clone().unwrap().join("static.c");
+
+    let mut header_file = File::create(header_path).unwrap();
+    let mut source_file = File::create(source_path).unwrap();
+    source_file
+        .write_fmt(format_args!("#include \"dpdk.h\"\n"))
+        .ok();
+    for (def_, impl_) in Iterator::zip(static_def_list.iter(), static_impl_list.iter()) {
+        header_file.write_fmt(format_args!("{};\n", def_)).ok();
+        source_file
+            .write_fmt(format_args!("{}{}\n", def_, impl_))
+            .ok();
+    }
+}
+
 fn generate_rust_def(state: &mut State) {
     let dpdk_include_path = state.include_path.clone().unwrap();
     let c_include_path = state.project_path.clone().unwrap().join("c_header");
     let dpdk_config_path = state.dpdk_config.clone().unwrap();
+    let project_path = state.project_path.clone().unwrap();
 
-    let header_path = state.project_path.clone().unwrap().join("dpdk.h");
-    let target_path = state
-        .project_path
-        .clone()
-        .unwrap()
-        .join("src")
-        .join("dpdk.rs");
+    let header_path = project_path.join("dpdk.h");
+    let target_path = project_path.join("src").join("dpdk.rs");
     bindgen::builder()
         .header(header_path.to_str().unwrap())
         .clang_arg(format!("-I{}", dpdk_include_path.to_str().unwrap()))
         .clang_arg(format!("-I{}", c_include_path.to_str().unwrap()))
+        .clang_arg(format!("-I{}", project_path.to_str().unwrap()))
         .clang_arg("-imacros")
         .clang_arg(dpdk_config_path.to_str().unwrap())
         .clang_arg("-march=native")
@@ -237,13 +348,9 @@ fn generate_rust_def(state: &mut State) {
 }
 
 fn generate_lib_rs(state: &mut State) {
-    let template_path = state.project_path.clone().unwrap().join("lib.rs.template");
-    let target_path = state
-        .project_path
-        .clone()
-        .unwrap()
-        .join("src")
-        .join("lib.rs");
+    let project_path = state.project_path.clone().unwrap();
+    let template_path = project_path.join("lib.rs.template");
+    let target_path = project_path.join("src").join("lib.rs");
 
     let format = Regex::new(r"rte_pmd_(\w+)").unwrap();
 
@@ -260,11 +367,22 @@ fn generate_lib_rs(state: &mut State) {
         pmds_string += &format!("\n\"{}\",", pmd);
     }
 
+    let mut static_use_string = String::new();
+    for name in &state.static_functions {
+        static_use_string += &format!(
+            "pub use dpdk::{prefix}{name} as {name};\n",
+            prefix = STATIC_PREFIX,
+            name = name
+        );
+    }
+
     let mut template = File::open(template_path).unwrap();
     let mut template_string = String::new();
     template.read_to_string(&mut template_string).ok();
 
     let formatted_string = template_string.replace("%pmd_list%", &pmds_string);
+    let formatted_string = formatted_string.replace("%static_use_defs%", &static_use_string);
+
     let mut target = File::create(target_path).unwrap();
     target.write_fmt(format_args!("{}", formatted_string)).ok();
 }
@@ -286,6 +404,19 @@ fn compile(state: &mut State) {
     for lib in &additional_libs {
         println!("cargo:rustc-link-lib={}", lib);
     }
+
+    let project_path = state.project_path.clone().unwrap();
+    let dpdk_include_path = state.include_path.clone().unwrap();
+    let dpdk_config = state.dpdk_config.clone().unwrap();
+    let source_path = project_path.join("static.c");
+    cc::Build::new()
+        .file(source_path)
+        .include(&dpdk_include_path)
+        .include(&project_path)
+        .flag("-march=native")
+        .flag("-imacros")
+        .flag(dpdk_config.to_str().unwrap())
+        .compile("lib_static_wrapper.a");
 }
 fn main() {
     let mut state: State = Default::default();
@@ -293,6 +424,7 @@ fn main() {
     find_dpdk(&mut state);
     find_link_libs(&mut state);
     make_all_in_one_header(&mut state);
+    generate_static_impl(&mut state);
     generate_rust_def(&mut state);
     generate_lib_rs(&mut state);
     compile(&mut state);

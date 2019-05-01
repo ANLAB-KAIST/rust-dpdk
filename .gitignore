@@ -1,6 +1,8 @@
 .idea/
 .vscode/
 
+static.c
+static.h
 dpdk.h
 src/dpdk.rs
 Cargo.lock
