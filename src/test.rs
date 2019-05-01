@@ -20,5 +20,8 @@ fn main() {
         let ret = dpdk::rte_eal_init(argc as c_int, argv.as_mut_ptr() as *mut *mut c_char);
         assert!(ret > 0);
         println!("{:?}", dpdk::pmd_list());
+
+        assert_eq!(dpdk::rte_is_power_of_2(7), 0);
+        assert_eq!(dpdk::rte_is_power_of_2(16), 1);
     }
 }
