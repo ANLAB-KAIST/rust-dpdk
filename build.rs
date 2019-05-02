@@ -185,7 +185,6 @@ fn make_all_in_one_header(state: &mut State) {
     let mut new_vec = vec![];
     'outer: for file in &headers {
         let file_name = file.file_stem().unwrap().to_str().unwrap();
-        println!("{}", file_name);
         for prev_name in &name_set {
             if file_name.starts_with(&format!("{}_", prev_name)) {
                 continue 'outer;
@@ -437,11 +436,16 @@ fn compile(state: &mut State) {
         "cargo:rustc-link-search=native={}",
         lib_path.to_str().unwrap()
     );
-    let format = Regex::new(r"lib(.*)\.(a|so)").unwrap();
-    for link in &state.dpdk_links {
-        let link_name = link.file_name().unwrap().to_str().unwrap();
-        if let Some(capture) = format.captures(link_name) {
-            println!("cargo:rustc-link-lib={}", &capture[1]);
+    if lib_path.join("libdpdk.a").exists() || lib_path.join("libdpdk.so").exists() {
+        println!("cargo:rustc-link-lib=dpdk");
+    } else {
+        // legacy mode
+        let format = Regex::new(r"lib(.*)\.(a|so)").unwrap();
+        for link in &state.dpdk_links {
+            let link_name = link.file_name().unwrap().to_str().unwrap();
+            if let Some(capture) = format.captures(link_name) {
+                println!("cargo:rustc-link-lib={}", &capture[1]);
+            }
         }
     }
     let additional_libs = vec!["numa"];
