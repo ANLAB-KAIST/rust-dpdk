@@ -22,6 +22,11 @@ struct State {
     static_functions: Vec<String>,
 }
 
+fn check_os(_: &mut State) {
+    #[cfg(not(unix))]
+    panic!("Currently, only xnix OS is supported.");
+}
+
 const STATIC_PREFIX: &'static str = "static_8a9f682d_";
 
 fn find_dpdk(state: &mut State) {
@@ -39,9 +44,9 @@ fn find_dpdk(state: &mut State) {
         state.library_path = Some(PathBuf::from("/usr/local/lib"));
     } else {
         // Automatic download
-        let dir_path = Path::new("3rdparty");
+        let dir_path = Path::new(state.project_path.as_ref().unwrap()).join("3rdparty");
         if !dir_path.exists() {
-            create_dir(dir_path).ok();
+            create_dir(&dir_path).ok();
         }
         assert!(dir_path.exists());
         let git_path = dir_path.join("dpdk");
@@ -446,7 +451,8 @@ fn compile(state: &mut State) {
 }
 fn main() {
     let mut state: State = Default::default();
-    state.project_path = Some(PathBuf::from("."));
+    state.project_path = Some(PathBuf::from(".").canonicalize().unwrap());
+    check_os(&mut state);
     find_dpdk(&mut state);
     find_link_libs(&mut state);
     make_all_in_one_header(&mut state);
