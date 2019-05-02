@@ -414,6 +414,19 @@ fn generate_lib_rs(state: &mut State) {
 }
 
 fn compile(state: &mut State) {
+    let project_path = state.project_path.clone().unwrap();
+    let dpdk_include_path = state.include_path.clone().unwrap();
+    let dpdk_config = state.dpdk_config.clone().unwrap();
+    let source_path = project_path.join("gen/static.c");
+    cc::Build::new()
+        .file(source_path)
+        .include(&dpdk_include_path)
+        .include(project_path.join("gen"))
+        .flag("-march=native")
+        .flag("-imacros")
+        .flag(dpdk_config.to_str().unwrap())
+        .compile("lib_static_wrapper.a");
+
     let lib_path = state.library_path.clone().unwrap();
     println!(
         "cargo:rustc-link-search=native={}",
@@ -430,19 +443,6 @@ fn compile(state: &mut State) {
     for lib in &additional_libs {
         println!("cargo:rustc-link-lib={}", lib);
     }
-
-    let project_path = state.project_path.clone().unwrap();
-    let dpdk_include_path = state.include_path.clone().unwrap();
-    let dpdk_config = state.dpdk_config.clone().unwrap();
-    let source_path = project_path.join("gen/static.c");
-    cc::Build::new()
-        .file(source_path)
-        .include(&dpdk_include_path)
-        .include(project_path.join("gen"))
-        .flag("-march=native")
-        .flag("-imacros")
-        .flag(dpdk_config.to_str().unwrap())
-        .compile("lib_static_wrapper.a");
 }
 fn main() {
     let mut state: State = Default::default();
