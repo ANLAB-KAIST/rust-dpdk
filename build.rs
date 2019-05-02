@@ -194,8 +194,12 @@ fn make_all_in_one_header(state: &mut State) {
     headers = new_vec;
 
     state.dpdk_headers = headers;
-    let template_path = state.project_path.clone().unwrap().join("dpdk.h.template");
-    let target_path = state.project_path.clone().unwrap().join("dpdk.h");
+    let template_path = state
+        .project_path
+        .clone()
+        .unwrap()
+        .join("gen/dpdk.h.template");
+    let target_path = state.project_path.clone().unwrap().join("gen/dpdk.h");
     let mut template = File::open(template_path).unwrap();
     let mut target = File::create(target_path).unwrap();
 
@@ -220,7 +224,7 @@ fn generate_static_impl(state: &mut State) {
     let index = clang::Index::new(&clang, false, false);
 
     let trans_unit = index
-        .parser("dpdk.h")
+        .parser("gen/dpdk.h")
         .arguments(&[
             format!(
                 "-I{}",
@@ -310,29 +314,48 @@ fn generate_static_impl(state: &mut State) {
         }
     }
 
-    let header_path = state.project_path.clone().unwrap().join("static.h");
-    let source_path = state.project_path.clone().unwrap().join("static.c");
+    let header_path = state.project_path.clone().unwrap().join("gen/static.h");
+    let header_template = state
+        .project_path
+        .clone()
+        .unwrap()
+        .join("gen/static.h.template");
+    let source_path = state.project_path.clone().unwrap().join("gen/static.c");
+    let source_template = state
+        .project_path
+        .clone()
+        .unwrap()
+        .join("gen/static.c.template");
 
-    let mut header_file = File::create(header_path).unwrap();
-    let mut source_file = File::create(source_path).unwrap();
-    source_file
-        .write_fmt(format_args!("#include \"dpdk.h\"\n"))
-        .ok();
+    let mut header_defs = String::new();
+    let mut static_impls = String::new();
     for (def_, impl_) in Iterator::zip(static_def_list.iter(), static_impl_list.iter()) {
-        header_file.write_fmt(format_args!("{};\n", def_)).ok();
-        source_file
-            .write_fmt(format_args!("{}{}\n", def_, impl_))
-            .ok();
+        header_defs += &format!("{};\n", def_);
+        static_impls += &format!("{}{}\n", def_, impl_);
     }
+
+    let mut template = File::open(header_template).unwrap();
+    let mut template_string = String::new();
+    template.read_to_string(&mut template_string).ok();
+    let formatted_string = template_string.replace("%header_defs%", &header_defs);
+    let mut target = File::create(header_path).unwrap();
+    target.write_fmt(format_args!("{}", &formatted_string)).ok();
+
+    let mut template = File::open(source_template).unwrap();
+    let mut template_string = String::new();
+    template.read_to_string(&mut template_string).ok();
+    let formatted_string = template_string.replace("%static_impls%", &static_impls);
+    let mut target = File::create(source_path).unwrap();
+    target.write_fmt(format_args!("{}", &formatted_string)).ok();
 }
 
 fn generate_rust_def(state: &mut State) {
     let dpdk_include_path = state.include_path.clone().unwrap();
-    let c_include_path = state.project_path.clone().unwrap().join("c_header");
+    let c_include_path = state.project_path.clone().unwrap().join("gen");
     let dpdk_config_path = state.dpdk_config.clone().unwrap();
     let project_path = state.project_path.clone().unwrap();
 
-    let header_path = project_path.join("dpdk.h");
+    let header_path = project_path.join("gen/dpdk.h");
     let target_path = project_path.join("src").join("dpdk.rs");
     bindgen::builder()
         .header(header_path.to_str().unwrap())
@@ -352,7 +375,7 @@ fn generate_rust_def(state: &mut State) {
 
 fn generate_lib_rs(state: &mut State) {
     let project_path = state.project_path.clone().unwrap();
-    let template_path = project_path.join("lib.rs.template");
+    let template_path = project_path.join("gen/lib.rs.template");
     let target_path = project_path.join("src").join("lib.rs");
 
     let format = Regex::new(r"rte_pmd_(\w+)").unwrap();
@@ -411,11 +434,11 @@ fn compile(state: &mut State) {
     let project_path = state.project_path.clone().unwrap();
     let dpdk_include_path = state.include_path.clone().unwrap();
     let dpdk_config = state.dpdk_config.clone().unwrap();
-    let source_path = project_path.join("static.c");
+    let source_path = project_path.join("gen/static.c");
     cc::Build::new()
         .file(source_path)
         .include(&dpdk_include_path)
-        .include(&project_path)
+        .include(project_path.join("gen"))
         .flag("-march=native")
         .flag("-imacros")
         .flag(dpdk_config.to_str().unwrap())

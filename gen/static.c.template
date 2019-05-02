@@ -1,0 +1,3 @@
+#include "dpdk.h"
+
+%static_impls%
