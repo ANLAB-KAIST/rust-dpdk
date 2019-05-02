@@ -12,7 +12,8 @@ RUN make -j$(nproc)
 RUN make -j$(nproc) install
 
 WORKDIR /
-RUN rm -rf /dpdk
+ENV RTE_SDK=/dpdk
+ENV RTE_TARGET=build
 
 # For rustup
 ENV RUSTUP_HOME=/usr/local/rustup
