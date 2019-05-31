@@ -5,6 +5,7 @@ extern crate num_cpus;
 extern crate regex;
 
 use regex::Regex;
+use std::cmp::Ordering;
 use std::env;
 use std::fs::*;
 use std::io::*;
@@ -193,7 +194,17 @@ fn make_all_in_one_header(state: &mut State) {
         new_vec.push(file.clone());
     }
 
-    new_vec.sort();
+    new_vec.sort_by(|left, right| {
+        let left_str = left.file_stem().unwrap().to_str().unwrap();
+        let right_str = right.file_stem().unwrap().to_str().unwrap();
+        let left_count = left_str.split("_").count();
+        let right_count = right_str.split("_").count();
+        match left_count.cmp(&right_count) {
+            Ordering::Equal => left_str.cmp(&right_str),
+            Ordering::Less => Ordering::Less,
+            Ordering::Greater => Ordering::Greater,
+        }
+    });
     new_vec.dedup();
     headers = new_vec;
 
@@ -213,7 +224,7 @@ fn make_all_in_one_header(state: &mut State) {
     let mut headers_string = String::new();
     for header in &state.dpdk_headers {
         headers_string += &format!(
-            "#include <{}>\n",
+            "#include \"{}\"\n",
             header.clone().file_name().unwrap().to_str().unwrap()
         );
     }
