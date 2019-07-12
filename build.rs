@@ -63,6 +63,19 @@ fn find_dpdk(state: &mut State) {
                 .output()
                 .expect("failed to run git command");
         }
+        Command::new("sed")
+            .args(&[
+                "-i",
+                "s/CONFIG_RTE_BUILD_SHARED_LIB=n/CONFIG_RTE_BUILD_SHARED_LIB=y/g",
+                git_path
+                    .join("config")
+                    .join("common_base")
+                    .to_str()
+                    .unwrap(),
+                "defconfig",
+            ])
+            .output()
+            .expect("failed to run sed command");
         Command::new("make")
             .args(&["-C", git_path.to_str().unwrap(), "defconfig"])
             .output()
@@ -98,7 +111,7 @@ fn find_link_libs(state: &mut State) {
             }
 
             if let Some(ext) = path.extension() {
-                if ext != "a" && ext != "so" {
+                if ext != "so" {
                     continue;
                 }
             } else {
@@ -437,6 +450,7 @@ fn compile(state: &mut State) {
         .file(source_path)
         .include(&dpdk_include_path)
         .include(project_path.join("gen"))
+        .flag("-w")
         .flag("-march=native")
         .flag("-imacros")
         .flag(dpdk_config.to_str().unwrap())
@@ -447,18 +461,22 @@ fn compile(state: &mut State) {
         "cargo:rustc-link-search=native={}",
         lib_path.to_str().unwrap()
     );
-    if lib_path.join("libdpdk.a").exists() || lib_path.join("libdpdk.so").exists() {
-        println!("cargo:rustc-link-lib=dpdk");
+
+    if lib_path.join("libdpdk.so").exists() {
+        println!("cargo:rustc-link-lib=dylib=dpdk");
     } else {
         // legacy mode
-        let format = Regex::new(r"lib(.*)\.(a|so)").unwrap();
+        let format = Regex::new(r"lib(.*)\.(so)").unwrap();
         for link in &state.dpdk_links {
-            let link_name = link.file_name().unwrap().to_str().unwrap();
-            if let Some(capture) = format.captures(link_name) {
-                println!("cargo:rustc-link-lib={}", &capture[1]);
+            let lib_name = link.file_name().unwrap().to_str().unwrap();
+
+            if let Some(capture) = format.captures(lib_name) {
+                let link_name = &capture[1];
+                println!("cargo:rustc-link-lib=dylib={}", link_name);
             }
         }
     }
+
     let additional_libs = vec!["numa"];
     for lib in &additional_libs {
         println!("cargo:rustc-link-lib={}", lib);
