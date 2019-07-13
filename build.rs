@@ -96,6 +96,10 @@ fn find_dpdk(state: &mut State) {
     assert!(state.library_path.clone().unwrap().exists());
     let config_header = state.include_path.clone().unwrap().join("rte_config.h");
     assert!(config_header.exists());
+    println!("cargo:rerun-if-changed={}", state.include_path);
+    println!("cargo:rerun-if-changed={}", state.library_path);
+    println!("cargo:rerun-if-env-changed=RTE_SDK");
+    println!("cargo:rerun-if-env-changed=RTE_TARGET");
     state.dpdk_config = Some(config_header);
 }
 
@@ -130,6 +134,9 @@ fn find_link_libs(state: &mut State) {
         } else {
             continue;
         }
+    }
+    if libs.len() < 1 {
+        panic!("Cannot find any shared libraries. Check if DPDK is build with CONFIG_RTE_BUILD_SHARED_LIB=y option.")
     }
     libs.sort();
     libs.dedup();

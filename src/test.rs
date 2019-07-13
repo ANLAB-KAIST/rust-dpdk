@@ -8,8 +8,8 @@ fn main() {
         let args: Vec<String> = env::args().collect();
         let mut args = vec![
             ffi::CString::new(args[0].clone()).unwrap(),
-            ffi::CString::new("--no-pci").unwrap(),
-            ffi::CString::new("--no-huge").unwrap(),
+            //ffi::CString::new("--no-pci").unwrap(),
+            //ffi::CString::new("--no-huge").unwrap(),
         ];
         let argc = args.len();
         let mut argv: Vec<*mut c_char> = vec![];
