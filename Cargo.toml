@@ -28,3 +28,9 @@ path = "src/lib.rs"
 [[bin]]
 name = "dpdk_test"
 path = "src/test.rs"
+
+[profile.dev]
+rpath = true
+
+[profile.release]
+rpath = true
