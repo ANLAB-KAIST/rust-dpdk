@@ -136,7 +136,7 @@ fn find_link_libs(state: &mut State) {
         }
     }
     if libs.len() < 1 {
-        panic!("Cannot find any shared libraries. Check if DPDK is build with CONFIG_RTE_BUILD_SHARED_LIB=y option.")
+        panic!("Cannot find any shared libraries. Check if DPDK is built with CONFIG_RTE_BUILD_SHARED_LIB=y option.")
     }
     libs.sort();
     libs.dedup();
