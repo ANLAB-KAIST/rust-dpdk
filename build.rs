@@ -92,19 +92,19 @@ fn find_dpdk(state: &mut State) {
         state.include_path = Some(git_path.join("build").join("include"));
         state.library_path = Some(git_path.join("build").join("lib"));
     }
-    assert!(state.include_path.clone().unwrap().exists());
-    assert!(state.library_path.clone().unwrap().exists());
-    let config_header = state.include_path.clone().unwrap().join("rte_config.h");
+    assert!(state.include_path.as_ref().unwrap().exists());
+    assert!(state.library_path.as_ref().unwrap().exists());
+    let config_header = state.include_path.as_ref().unwrap().join("rte_config.h");
     assert!(config_header.exists());
-    println!("cargo:rerun-if-changed={}", state.include_path.unwrap().to_str().unwrap());
-    println!("cargo:rerun-if-changed={}", state.library_path.unwrap().to_str().unwrap());
+    println!("cargo:rerun-if-changed={}", state.include_path.as_ref().unwrap().to_str().unwrap());
+    println!("cargo:rerun-if-changed={}", state.library_path.as_ref().unwrap().to_str().unwrap());
     println!("cargo:rerun-if-env-changed=RTE_SDK");
     println!("cargo:rerun-if-env-changed=RTE_TARGET");
     state.dpdk_config = Some(config_header);
 }
 
 fn find_link_libs(state: &mut State) {
-    let lib_dir = state.library_path.clone().unwrap();
+    let lib_dir = state.library_path.as_ref().unwrap();
 
     let mut libs = vec![];
     for entry in lib_dir.read_dir().expect("read_dir failed") {
