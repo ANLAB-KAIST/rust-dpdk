@@ -63,6 +63,21 @@ fn find_dpdk(state: &mut State) {
                 .output()
                 .expect("failed to run git command");
         }
+        /*
+        Command::new("sed")
+            .args(&[
+                "-i",
+                "s/CONFIG_RTE_BUILD_SHARED_LIB=n/CONFIG_RTE_BUILD_SHARED_LIB=y/g",
+                git_path
+                    .join("config")
+                    .join("common_base")
+                    .to_str()
+                    .unwrap(),
+                "defconfig",
+            ])
+            .output()
+            .expect("failed to run sed command");
+            */
         Command::new("make")
             .args(&["-C", git_path.to_str().unwrap(), "defconfig"])
             .output()
@@ -79,15 +94,26 @@ fn find_dpdk(state: &mut State) {
         state.include_path = Some(git_path.join("build").join("include"));
         state.library_path = Some(git_path.join("build").join("lib"));
     }
-    assert!(state.include_path.clone().unwrap().exists());
-    assert!(state.library_path.clone().unwrap().exists());
-    let config_header = state.include_path.clone().unwrap().join("rte_config.h");
+    assert!(state.include_path.as_ref().unwrap().exists());
+    assert!(state.library_path.as_ref().unwrap().exists());
+    let config_header = state.include_path.as_ref().unwrap().join("rte_config.h");
     assert!(config_header.exists());
+    println!(
+        "cargo:rerun-if-changed={}",
+        state.include_path.as_ref().unwrap().to_str().unwrap()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        state.library_path.as_ref().unwrap().to_str().unwrap()
+    );
+    println!("cargo:rerun-if-env-changed=RTE_SDK");
+    println!("cargo:rerun-if-env-changed=RTE_TARGET");
+
     state.dpdk_config = Some(config_header);
 }
 
 fn find_link_libs(state: &mut State) {
-    let lib_dir = state.library_path.clone().unwrap();
+    let lib_dir = state.library_path.as_ref().unwrap();
 
     let mut libs = vec![];
     for entry in lib_dir.read_dir().expect("read_dir failed") {
@@ -98,7 +124,8 @@ fn find_link_libs(state: &mut State) {
             }
 
             if let Some(ext) = path.extension() {
-                if ext != "a" && ext != "so" {
+                if ext != "a" {
+                    //if ext != "so" {
                     continue;
                 }
             } else {
@@ -117,6 +144,9 @@ fn find_link_libs(state: &mut State) {
         } else {
             continue;
         }
+    }
+    if libs.len() < 1 {
+        panic!("Cannot find any shared libraries. Check if DPDK is built with CONFIG_RTE_BUILD_SHARED_LIB=y option.")
     }
     libs.sort();
     libs.dedup();
@@ -144,8 +174,8 @@ fn check_direct_include(path: &Path) -> bool {
 }
 
 fn make_all_in_one_header(state: &mut State) {
-    let include_dir = state.include_path.clone().unwrap();
-    let dpdk_config = state.dpdk_config.clone().unwrap();
+    let include_dir = state.include_path.as_ref().unwrap();
+    let dpdk_config = state.dpdk_config.as_ref().unwrap();
     let mut headers = vec![];
     for entry in include_dir.read_dir().expect("read_dir failed") {
         if let Ok(entry) = entry {
@@ -162,7 +192,7 @@ fn make_all_in_one_header(state: &mut State) {
             } else {
                 continue;
             }
-            if path == dpdk_config {
+            if path == *dpdk_config {
                 continue;
             }
             if !check_direct_include(&path) {
@@ -211,10 +241,10 @@ fn make_all_in_one_header(state: &mut State) {
     state.dpdk_headers = headers;
     let template_path = state
         .project_path
-        .clone()
+        .as_ref()
         .unwrap()
         .join("gen/dpdk.h.template");
-    let target_path = state.project_path.clone().unwrap().join("gen/dpdk.h");
+    let target_path = state.project_path.as_ref().unwrap().join("gen/dpdk.h");
     let mut template = File::open(template_path).unwrap();
     let mut target = File::create(target_path).unwrap();
 
@@ -225,7 +255,7 @@ fn make_all_in_one_header(state: &mut State) {
     for header in &state.dpdk_headers {
         headers_string += &format!(
             "#include \"{}\"\n",
-            header.clone().file_name().unwrap().to_str().unwrap()
+            header.file_name().unwrap().to_str().unwrap()
         );
     }
     let formatted_string = template_string.replace("%header_list%", &headers_string);
@@ -243,13 +273,13 @@ fn generate_static_impl(state: &mut State) {
         .arguments(&[
             format!(
                 "-I{}",
-                state.include_path.clone().unwrap().to_str().unwrap()
+                state.include_path.as_ref().unwrap().to_str().unwrap()
             )
             .to_string(),
             String::from("-imacros"),
             state
                 .dpdk_config
-                .clone()
+                .as_ref()
                 .unwrap()
                 .to_str()
                 .unwrap()
@@ -329,16 +359,16 @@ fn generate_static_impl(state: &mut State) {
         }
     }
 
-    let header_path = state.project_path.clone().unwrap().join("gen/static.h");
+    let header_path = state.project_path.as_ref().unwrap().join("gen/static.h");
     let header_template = state
         .project_path
-        .clone()
+        .as_ref()
         .unwrap()
         .join("gen/static.h.template");
-    let source_path = state.project_path.clone().unwrap().join("gen/static.c");
+    let source_path = state.project_path.as_ref().unwrap().join("gen/static.c");
     let source_template = state
         .project_path
-        .clone()
+        .as_ref()
         .unwrap()
         .join("gen/static.c.template");
 
@@ -365,10 +395,10 @@ fn generate_static_impl(state: &mut State) {
 }
 
 fn generate_rust_def(state: &mut State) {
-    let dpdk_include_path = state.include_path.clone().unwrap();
-    let c_include_path = state.project_path.clone().unwrap().join("gen");
-    let dpdk_config_path = state.dpdk_config.clone().unwrap();
-    let project_path = state.project_path.clone().unwrap();
+    let dpdk_include_path = state.include_path.as_ref().unwrap();
+    let c_include_path = state.project_path.as_ref().unwrap().join("gen");
+    let dpdk_config_path = state.dpdk_config.as_ref().unwrap();
+    let project_path = state.project_path.as_ref().unwrap();
 
     let header_path = project_path.join("gen/dpdk.h");
     let target_path = project_path.join("src").join("dpdk.rs");
@@ -389,7 +419,7 @@ fn generate_rust_def(state: &mut State) {
 }
 
 fn generate_lib_rs(state: &mut State) {
-    let project_path = state.project_path.clone().unwrap();
+    let project_path = state.project_path.as_ref().unwrap();
     let template_path = project_path.join("gen/lib.rs.template");
     let target_path = project_path.join("src").join("lib.rs");
 
@@ -429,40 +459,76 @@ fn generate_lib_rs(state: &mut State) {
 }
 
 fn compile(state: &mut State) {
-    let project_path = state.project_path.clone().unwrap();
-    let dpdk_include_path = state.include_path.clone().unwrap();
-    let dpdk_config = state.dpdk_config.clone().unwrap();
+    let project_path = state.project_path.as_ref().unwrap();
+    let dpdk_include_path = state.include_path.as_ref().unwrap();
+    let dpdk_config = state.dpdk_config.as_ref().unwrap();
     let source_path = project_path.join("gen/static.c");
+    let lib_path = state.library_path.as_ref().unwrap();
     cc::Build::new()
         .file(source_path)
+        .static_flag(true)
+        .shared_flag(false)
         .include(&dpdk_include_path)
         .include(project_path.join("gen"))
+        .flag("-w")
         .flag("-march=native")
         .flag("-imacros")
         .flag(dpdk_config.to_str().unwrap())
         .compile("lib_static_wrapper.a");
 
-    let lib_path = state.library_path.clone().unwrap();
+    /*
     println!(
         "cargo:rustc-link-search=native={}",
         lib_path.to_str().unwrap()
     );
-    if lib_path.join("libdpdk.a").exists() || lib_path.join("libdpdk.so").exists() {
-        println!("cargo:rustc-link-lib=dpdk");
+    */
+
+    let mut link_list = String::new();
+    if lib_path.join("libdpdk.a").exists() {
+        //if lib_path.join("libdpdk.so").exists() {
+        link_list += " -C link-arg=-ldpdk";
+    //println!("cargo:rustc-link-lib=dpdk");
     } else {
         // legacy mode
-        let format = Regex::new(r"lib(.*)\.(a|so)").unwrap();
+        //let format = Regex::new(r"lib(.*)\.(so)").unwrap();
+        let format = Regex::new(r"lib(.*)\.(a)").unwrap();
         for link in &state.dpdk_links {
-            let link_name = link.file_name().unwrap().to_str().unwrap();
-            if let Some(capture) = format.captures(link_name) {
-                println!("cargo:rustc-link-lib={}", &capture[1]);
+            let lib_name = link.file_name().unwrap().to_str().unwrap();
+
+            if let Some(capture) = format.captures(lib_name) {
+                let link_name = &capture[1];
+                if link_name == "dpdk" {
+                    continue;
+                }
+                link_list += &format!(" -C link-arg=-l{}", link_name);
+                //println!("cargo:rustc-link-lib={}", link_name);
             }
         }
     }
-    let additional_libs = vec!["numa"];
-    for lib in &additional_libs {
-        println!("cargo:rustc-link-lib={}", lib);
+
+    let mut additional_libs = String::new();
+    let additional_libs_list = vec!["numa", "m"];
+    for lib in &additional_libs_list {
+        //println!("cargo:rustc-link-lib={}", lib);
+        additional_libs += &format!(" -C link-arg=-l{}", lib);
     }
+
+    let expected_env = format!(
+        "-C link-arg=-L{} -C link-arg=-Wl,--whole-archive{} -C link-arg=-Wl,--no-whole-archive{}",
+        lib_path.to_str().unwrap(),
+        &link_list,
+        &additional_libs
+    );
+
+    if let Ok(env_string) = env::var("RUSTFLAGS") {
+        if env_string == expected_env {
+            return;
+        }
+    }
+    panic!(
+        "RUSTFLAGS env var is not set. Please set via following command:\nexport RUSTFLAGS=\"{}\"",
+        expected_env
+    );
 }
 fn main() {
     let mut state: State = Default::default();
