@@ -523,12 +523,15 @@ fn compile(state: &mut State) {
     if let Ok(env_string) = env::var("RUSTFLAGS") {
         if env_string == expected_env {
             return;
+        } else {
+            panic!(
+                "RUSTFLAGS env var is different from expected. Expected: {}, Current: {}.",
+                expected_env, env_string
+            );
         }
+    } else {
+        panic!("RUSTFLAGS env var is not set. Please set via following command:\nexport RUSTFLAGS=\"{}\"", expected_env);
     }
-    panic!(
-        "RUSTFLAGS env var is not set. Please set via following command:\nexport RUSTFLAGS=\"{}\"",
-        expected_env
-    );
 }
 fn main() {
     let mut state: State = Default::default();
