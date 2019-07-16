@@ -106,6 +106,16 @@ fn find_dpdk(state: &mut State) {
         "cargo:rerun-if-changed={}",
         state.library_path.as_ref().unwrap().to_str().unwrap()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        state
+            .project_path
+            .as_ref()
+            .unwrap()
+            .join("gen")
+            .to_str()
+            .unwrap()
+    );
     println!("cargo:rerun-if-env-changed=RTE_SDK");
     println!("cargo:rerun-if-env-changed=RTE_TARGET");
 
@@ -146,7 +156,8 @@ fn find_link_libs(state: &mut State) {
         }
     }
     if libs.len() < 1 {
-        panic!("Cannot find any shared libraries. Check if DPDK is built with CONFIG_RTE_BUILD_SHARED_LIB=y option.")
+        //panic!("Cannot find any shared libraries. Check if DPDK is built with CONFIG_RTE_BUILD_SHARED_LIB=y option.");
+        panic!("Cannot find any libraries.");
     }
     libs.sort();
     libs.dedup();
