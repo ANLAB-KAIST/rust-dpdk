@@ -34,3 +34,6 @@ RUN rustup --version
 # We need both clang and libclang to work with
 # https://bugs.launchpad.net/ubuntu/+source/llvm-defaults/+bug/1242300
 RUN apt install -y libclang-dev clang
+
+# For rust-dpdk build
+ENV RUSTFLAGS="-C link-arg=-L/usr/local/share/dpdk/x86_64-native-linuxapp-gcc/lib -C link-arg=-Wl,--whole-archive -C link-arg=-ldpdk -C link-arg=-Wl,--no-whole-archive -C link-arg=-lnuma -C link-arg=-lm"
