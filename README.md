@@ -4,6 +4,21 @@
 
 Tested with <https://github.com/rust-lang/rust-bindgen> v0.47
 
+## Building
+There are a couple of ways to build the sources.
+
+### Using `docker build`
+The following command will build the base container needed.
+
+```bash
+docker build -t rust-dpdk .
+```
+
+To build the source-code using this container:
+```bash
+docker run --rm -v `pwd`:/workdir --workdir /workdir rust-dpdk cargo build
+```
+
 ## Issues
 
 Test fails with v0.48 and v0.49 (2019-04-28).
