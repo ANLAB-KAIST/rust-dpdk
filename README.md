@@ -19,6 +19,15 @@ To build the source-code using this container:
 docker run --rm -v `pwd`:/workdir --workdir /workdir rust-dpdk cargo build
 ```
 
+### Using `cargo build`
+`RTE_SDK` environment variable needs to be defined and exported. (See DPDK documentation for building DPDK)
+
+```bash
+# Assuming the libraries that were built are located at $RTE_SDK/build/lib
+export RUSTFLAGS="-C link-arg=-L$RTE_SDK/build/lib -C link-arg=-Wl,--whole-archive -C link-arg=-ldpdk -C link-arg=-Wl,--no-whole-archive -C link-arg=-lnuma -C link-arg=-lm"
+cargo build
+```
+
 ## Issues
 
 Test fails with v0.48 and v0.49 (2019-04-28).
