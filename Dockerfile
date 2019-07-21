@@ -6,7 +6,7 @@ ENV RTE_TARGET=x86_64-native-linuxapp-gcc
 RUN apt update -y && apt dist-upgrade -y && apt autoremove -y && apt autoclean -y
 RUN apt install -y build-essential libnuma-dev git linux-headers-$(uname -r)
 
-RUN git clone -b releases "https://gitlab.kaist.ac.kr/3rdparty/dpdk" /dpdk
+RUN git clone -b v19.05 "https://github.com/DPDK/dpdk.git" /dpdk
 
 WORKDIR /dpdk
 
