@@ -56,8 +56,8 @@ fn find_dpdk(state: &mut State) {
                 .args(&[
                     "clone",
                     "-b",
-                    "releases",
-                    "https://gitlab.kaist.ac.kr/3rdparty/dpdk",
+                    "v19.05",
+                    "https://github.com/DPDK/dpdk.git",
                     git_path.to_str().unwrap(),
                 ])
                 .output()
