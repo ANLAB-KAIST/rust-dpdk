@@ -518,7 +518,7 @@ fn compile(state: &mut State) {
     }
 
     let mut additional_libs = String::new();
-    let additional_libs_list = vec!["numa", "m"];
+    let additional_libs_list = vec!["numa", "m", "c"];
     for lib in &additional_libs_list {
         //println!("cargo:rustc-link-lib={}", lib);
         additional_libs += &format!(" -C link-arg=-l{}", lib);
