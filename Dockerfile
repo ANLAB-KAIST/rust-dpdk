@@ -12,6 +12,9 @@ RUN git clone -b v19.05 "https://github.com/DPDK/dpdk.git" /dpdk
 
 WORKDIR /dpdk
 
+RUN echo "CONFIG_RTE_EAL_IGB_UIO=n" >> config/common_linux
+RUN echo "CONFIG_RTE_KNI_KMOD=n" >> config/common_linux
+
 RUN echo "${RTE_TARGET}" > RTE_TARGET_EXPECTED
 RUN make defconfig | sed -r 's/(.*)\s(\w+)/\2/g' > RTE_TARGET
 RUN diff -w -q RTE_TARGET RTE_TARGET_EXPECTED
