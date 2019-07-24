@@ -1,7 +1,7 @@
 FROM debian:latest
 
 ENV RTE_SDK=/usr/local/share/dpdk/
-ENV RTE_TARGET=x86_64-native-linuxapp-gcc
+ENV RTE_TARGET=x86_64-native-linux-gcc
 
 RUN apt-get update -y && apt-get dist-upgrade -y && apt-get autoremove -y && apt-get autoclean -y
 RUN apt-get install -y linux-headers-amd64
