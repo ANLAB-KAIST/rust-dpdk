@@ -1,9 +1,5 @@
 pipeline {
-    agent {
-        dockerfile {
-            additionalBuildArgs "--no-cache"
-        }
-    }
+    agent { dockerfile true }
     stages {
         stage ("Version") {
             steps {
