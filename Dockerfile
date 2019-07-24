@@ -5,7 +5,7 @@ ENV RTE_TARGET=x86_64-native-linux-gcc
 
 RUN apt-get update -y && apt-get dist-upgrade -y && apt-get autoremove -y && apt-get autoclean -y
 RUN apt-get install -y linux-headers-amd64
-#RUN apt-get install -y linux-headers-$(uname -r)-all
+RUN apt-get install -y linux-headers-$(uname -r)-all
 RUN apt-get install -y build-essential libnuma-dev git 
 
 RUN git clone -b v19.05 "https://github.com/DPDK/dpdk.git" /dpdk
