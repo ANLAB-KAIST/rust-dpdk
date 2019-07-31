@@ -106,16 +106,25 @@ fn find_dpdk(state: &mut State) {
         "cargo:rerun-if-changed={}",
         state.library_path.as_ref().unwrap().to_str().unwrap()
     );
-    println!(
-        "cargo:rerun-if-changed={}",
-        state
-            .project_path
-            .as_ref()
-            .unwrap()
-            .join("gen")
-            .to_str()
-            .unwrap()
-    );
+    for entry in state
+        .project_path
+        .as_ref()
+        .unwrap()
+        .join("gen")
+        .read_dir()
+        .expect("read_dir failed")
+    {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+
+            if let Some(ext) = path.extension() {
+                if ext == "template" {
+                    println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
+                }
+            }
+        }
+    }
+
     println!("cargo:rerun-if-env-changed=RTE_SDK");
     println!("cargo:rerun-if-env-changed=RTE_TARGET");
 
@@ -532,7 +541,7 @@ fn compile(state: &mut State) {
     );
 
     if let Ok(env_string) = env::var("RUSTFLAGS") {
-        if expected_env.contains(&env_string) {
+        if env_string.contains(&expected_env) {
             return;
         } else {
             panic!(
