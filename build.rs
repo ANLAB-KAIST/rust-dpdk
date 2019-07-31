@@ -532,7 +532,7 @@ fn compile(state: &mut State) {
     );
 
     if let Ok(env_string) = env::var("RUSTFLAGS") {
-        if env_string == expected_env {
+        if expected_env.contains(&env_string) {
             return;
         } else {
             panic!(
