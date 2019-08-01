@@ -83,6 +83,7 @@ fn find_dpdk(state: &mut State) {
             .output()
             .expect("failed to run make command");
         Command::new("make")
+            .env("EXTRA_CFLAGS", " -fPIC ")
             .args(&[
                 "-C",
                 git_path.to_str().unwrap(),
