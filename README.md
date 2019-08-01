@@ -8,6 +8,8 @@ Tested with <https://github.com/DPDK/dpdk.git> v19.05.
 
 ## How to use
 
+DPDK should be built with `EXTRA_CFLAGS=" -fPIC "` flag.
+
 Currently, Rust cargo does not support changing the linker options via build.rs.
 If not set, DPDK's dynamic driver loading will not work so that no PMD will be loaded.
 The build script will generate `export RUSTFLAGS=...` message on its first run.
