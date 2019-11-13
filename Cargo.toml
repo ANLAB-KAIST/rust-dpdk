@@ -16,7 +16,7 @@ Rust binding for Intel DPDK (under construction).
 
 [build-dependencies]
 bindgen = "= 0.47" # Test failed for 0.48 and 0.49
-num_cpus = "1.0"
+num_cpus = "1"
 regex = "1"
 clang = { version = "*", features = ["runtime", "clang_3_6"] }
 cc = "1"
