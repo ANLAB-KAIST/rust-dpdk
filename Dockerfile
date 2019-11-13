@@ -8,7 +8,7 @@ RUN apt-get install -y linux-headers-amd64
 #RUN apt-get install -y linux-headers-$(uname -r)-all
 RUN apt-get install -y build-essential libnuma-dev git 
 
-RUN git clone -b v19.05 "https://github.com/DPDK/dpdk.git" /dpdk
+RUN git clone -b v19.08 "https://github.com/DPDK/dpdk.git" /dpdk
 
 WORKDIR /dpdk
 
