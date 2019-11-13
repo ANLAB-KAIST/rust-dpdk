@@ -8,7 +8,7 @@ RUN apt-get install -y linux-headers-amd64
 #RUN apt-get install -y linux-headers-$(uname -r)-all
 RUN apt-get install -y build-essential libnuma-dev git 
 
-RUN git clone -b v19.05 "https://github.com/DPDK/dpdk.git" /dpdk
+RUN git clone -b v19.08 "https://github.com/DPDK/dpdk.git" /dpdk
 
 WORKDIR /dpdk
 
@@ -38,7 +38,7 @@ RUN rustup --version
 # For rust-dpdk
 # We need both clang and libclang to work with
 # https://bugs.launchpad.net/ubuntu/+source/llvm-defaults/+bug/1242300
-RUN apt-get install -y libclang-dev clang
+RUN apt-get install -y libclang-dev clang llvm-dev
 
 # For rust-dpdk build
 ENV RUSTFLAGS="-C link-arg=-L/usr/local/share/dpdk/x86_64-native-linux-gcc/lib -C link-arg=-Wl,--whole-archive -C link-arg=-ldpdk -C link-arg=-Wl,--no-whole-archive -C link-arg=-lnuma -C link-arg=-lm -C link-arg=-lc"

@@ -15,6 +15,8 @@ use std::process::Command;
 #[derive(Default)]
 struct State {
     project_path: Option<PathBuf>,
+    out_path: Option<PathBuf>,
+    system_include_path: Vec<String>,
     include_path: Option<PathBuf>,
     library_path: Option<PathBuf>,
     dpdk_headers: Vec<PathBuf>,
@@ -26,6 +28,20 @@ struct State {
 fn check_os(_: &mut State) {
     #[cfg(not(unix))]
     panic!("Currently, only xnix OS is supported.");
+}
+
+fn check_compiler(state: &mut State) {
+    let output = Command::new("bash")
+        .args(&[
+            "-c",
+            "clang -march=native -Wp,-v -x c - -fsyntax-only < /dev/null 2>&1 | sed -e '/^#include <...>/,/^End of search/{ //!b };d'",
+        ])
+        .output()
+        .expect("failed to extract cc include path");
+    let message = String::from_utf8(output.stdout).unwrap();
+    state
+        .system_include_path
+        .extend(message.lines().map(|x| String::from(x.trim())));
 }
 
 const STATIC_PREFIX: &'static str = "static_8a9f682d_";
@@ -45,7 +61,7 @@ fn find_dpdk(state: &mut State) {
         state.library_path = Some(PathBuf::from("/usr/local/lib"));
     } else {
         // Automatic download
-        let dir_path = Path::new(state.project_path.as_ref().unwrap()).join("3rdparty");
+        let dir_path = Path::new(state.out_path.as_ref().unwrap()).join("3rdparty");
         if !dir_path.exists() {
             create_dir(&dir_path).ok();
         }
@@ -56,28 +72,13 @@ fn find_dpdk(state: &mut State) {
                 .args(&[
                     "clone",
                     "-b",
-                    "v19.05",
+                    "v19.08",
                     "https://github.com/DPDK/dpdk.git",
                     git_path.to_str().unwrap(),
                 ])
                 .output()
                 .expect("failed to run git command");
         }
-        /*
-        Command::new("sed")
-            .args(&[
-                "-i",
-                "s/CONFIG_RTE_BUILD_SHARED_LIB=n/CONFIG_RTE_BUILD_SHARED_LIB=y/g",
-                git_path
-                    .join("config")
-                    .join("common_base")
-                    .to_str()
-                    .unwrap(),
-                "defconfig",
-            ])
-            .output()
-            .expect("failed to run sed command");
-            */
         Command::new("make")
             .args(&["-C", git_path.to_str().unwrap(), "defconfig"])
             .output()
@@ -265,7 +266,7 @@ fn make_all_in_one_header(state: &mut State) {
         .as_ref()
         .unwrap()
         .join("gen/dpdk.h.template");
-    let target_path = state.project_path.as_ref().unwrap().join("gen/dpdk.h");
+    let target_path = state.out_path.as_ref().unwrap().join("dpdk.h");
     let mut template = File::open(template_path).unwrap();
     let mut target = File::create(target_path).unwrap();
 
@@ -287,27 +288,47 @@ fn make_all_in_one_header(state: &mut State) {
 fn generate_static_impl(state: &mut State) {
     let clang = clang::Clang::new().unwrap();
 
-    let index = clang::Index::new(&clang, false, false);
+    let index = clang::Index::new(&clang, true, true);
+
+    let header_path = state.out_path.as_ref().unwrap().join("dpdk.h");
+
+    let mut argument = vec![
+        "-march=native".into(),
+        format!(
+            "-I{}",
+            state.include_path.as_ref().unwrap().to_str().unwrap()
+        )
+        .to_string(),
+        format!("-I{}", state.out_path.as_ref().unwrap().to_str().unwrap()).to_string(),
+        "-imacros".into(),
+        state
+            .dpdk_config
+            .as_ref()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string(),
+    ];
+
+    for path in state.system_include_path.iter() {
+        argument.push(format!("-I{}", path).to_string());
+    }
 
     let trans_unit = index
-        .parser("gen/dpdk.h")
-        .arguments(&[
-            format!(
-                "-I{}",
-                state.include_path.as_ref().unwrap().to_str().unwrap()
-            )
-            .to_string(),
-            String::from("-imacros"),
-            state
-                .dpdk_config
-                .as_ref()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string(),
-        ])
+        .parser(header_path)
+        .arguments(&argument)
         .parse()
         .unwrap();
+    let diagnostics = trans_unit.get_diagnostics();
+    let mut fatal_count = 0;
+    for diagnostic in diagnostics {
+        if let clang::diagnostic::Severity::Fatal = diagnostic.get_severity() {
+            fatal_count += 1;
+        }
+    }
+    if fatal_count > 0 {
+        panic!(format!("Encountering {} fatal parse errors", fatal_count));
+    }
 
     let mut static_def_list = vec![];
     let mut static_impl_list = vec![];
@@ -347,6 +368,11 @@ fn generate_static_impl(state: &mut State) {
         if let (Some(clang::StorageClass::Static), Some(return_type), Some(name), true) =
             (storage_, return_type_, name_, is_decl)
         {
+            if name.starts_with("_") {
+                // Skip low level intrinsics
+                continue;
+            }
+            //println!("cargo:warning={:?}", name);
             let mut arg_string = String::from("");
             let mut param_string = String::from("");
             let return_type_string = return_type.get_display_name();
@@ -380,13 +406,13 @@ fn generate_static_impl(state: &mut State) {
         }
     }
 
-    let header_path = state.project_path.as_ref().unwrap().join("gen/static.h");
+    let header_path = state.out_path.as_ref().unwrap().join("static.h");
     let header_template = state
         .project_path
         .as_ref()
         .unwrap()
         .join("gen/static.h.template");
-    let source_path = state.project_path.as_ref().unwrap().join("gen/static.c");
+    let source_path = state.out_path.as_ref().unwrap().join("static.c");
     let source_template = state
         .project_path
         .as_ref()
@@ -417,22 +443,22 @@ fn generate_static_impl(state: &mut State) {
 
 fn generate_rust_def(state: &mut State) {
     let dpdk_include_path = state.include_path.as_ref().unwrap();
-    let c_include_path = state.project_path.as_ref().unwrap().join("gen");
     let dpdk_config_path = state.dpdk_config.as_ref().unwrap();
-    let project_path = state.project_path.as_ref().unwrap();
+    let out_path = state.out_path.as_ref().unwrap();
 
-    let header_path = project_path.join("gen/dpdk.h");
-    let target_path = project_path.join("src").join("dpdk.rs");
+    let header_path = out_path.join("static.h");
+    let target_path = out_path.join("dpdk.rs");
     bindgen::builder()
         .header(header_path.to_str().unwrap())
         .clang_arg(format!("-I{}", dpdk_include_path.to_str().unwrap()))
-        .clang_arg(format!("-I{}", c_include_path.to_str().unwrap()))
-        .clang_arg(format!("-I{}", project_path.to_str().unwrap()))
+        .clang_arg(format!("-I{}", out_path.to_str().unwrap()))
         .clang_arg("-imacros")
         .clang_arg(dpdk_config_path.to_str().unwrap())
         .clang_arg("-march=native")
         .clang_arg("-Wno-everything")
         .rustfmt_bindings(true)
+        .opaque_type("max_align_t")
+        .opaque_type("rte_event.*")
         .generate()
         .unwrap()
         .write_to_file(target_path)
@@ -442,7 +468,7 @@ fn generate_rust_def(state: &mut State) {
 fn generate_lib_rs(state: &mut State) {
     let project_path = state.project_path.as_ref().unwrap();
     let template_path = project_path.join("gen/lib.rs.template");
-    let target_path = project_path.join("src").join("lib.rs");
+    let target_path = state.out_path.as_ref().unwrap().join("lib.rs");
 
     let format = Regex::new(r"rte_pmd_(\w+)").unwrap();
 
@@ -480,33 +506,26 @@ fn generate_lib_rs(state: &mut State) {
 }
 
 fn compile(state: &mut State) {
-    let project_path = state.project_path.as_ref().unwrap();
+    let out_path = state.out_path.as_ref().unwrap();
     let dpdk_include_path = state.include_path.as_ref().unwrap();
     let dpdk_config = state.dpdk_config.as_ref().unwrap();
-    let source_path = project_path.join("gen/static.c");
+    let source_path = out_path.join("static.c");
     let lib_path = state.library_path.as_ref().unwrap();
     cc::Build::new()
         .file(source_path)
         .static_flag(true)
         .shared_flag(false)
-        .include(&dpdk_include_path)
-        .include(project_path.join("gen"))
-        .flag("-w")
+        .opt_level(3)
+        .include(dpdk_include_path)
+        .include(out_path)
+        .flag("-w") // hide warnings
         .flag("-march=native")
         .flag("-imacros")
         .flag(dpdk_config.to_str().unwrap())
         .compile("lib_static_wrapper.a");
 
-    /*
-    println!(
-        "cargo:rustc-link-search=native={}",
-        lib_path.to_str().unwrap()
-    );
-    */
-
     let mut link_list = String::new();
     if lib_path.join("libdpdk.a").exists() {
-        //if lib_path.join("libdpdk.so").exists() {
         link_list += " -C link-arg=-ldpdk";
     //println!("cargo:rustc-link-lib=dpdk");
     } else {
@@ -557,7 +576,13 @@ fn compile(state: &mut State) {
 fn main() {
     let mut state: State = Default::default();
     state.project_path = Some(PathBuf::from(".").canonicalize().unwrap());
+    state.out_path = Some(
+        PathBuf::from(env::var("OUT_DIR").unwrap())
+            .canonicalize()
+            .unwrap(),
+    );
     check_os(&mut state);
+    check_compiler(&mut state);
     find_dpdk(&mut state);
     find_link_libs(&mut state);
     make_all_in_one_header(&mut state);

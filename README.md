@@ -17,8 +17,4 @@ Please execute the command to build your DPDK applications.
 
 ## Issues
 
-Test fails with v0.48 and v0.49 (2019-04-28).
-
-Related issue: <https://github.com/rust-lang/rust-bindgen/issues/1498>
-
-However, similar problems still occur, so we fix to use bindgen 0.47.
+Test fails with bindgen v0.48 to v0.51 (2019-11-13).

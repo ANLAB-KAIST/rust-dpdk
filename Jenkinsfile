@@ -18,6 +18,7 @@ pipeline {
         stage ("Build") {
             steps {
                 sh "cargo build"
+                sh "cargo test --lib"
                 sh "cargo run -- --no-pci --no-huge"
             }
         }
