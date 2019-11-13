@@ -17,4 +17,4 @@ Please execute the command to build your DPDK applications.
 
 ## Issues
 
-Test fails with v0.48 to v0.51 (2019-11-13).
+Test fails with bindgen v0.48 to v0.51 (2019-11-13).

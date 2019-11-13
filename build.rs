@@ -42,8 +42,6 @@ fn check_compiler(state: &mut State) {
     state
         .system_include_path
         .extend(message.lines().map(|x| String::from(x.trim())));
-    //state.system_include_path.push("/usr/include".into());
-    //state.system_include_path.push("/usr/lib/llvm-7/lib/clang/7.0.1/include".into());
 }
 
 const STATIC_PREFIX: &'static str = "static_8a9f682d_";
@@ -74,7 +72,7 @@ fn find_dpdk(state: &mut State) {
                 .args(&[
                     "clone",
                     "-b",
-                    "v19.05",
+                    "v19.08",
                     "https://github.com/DPDK/dpdk.git",
                     git_path.to_str().unwrap(),
                 ])
@@ -459,6 +457,8 @@ fn generate_rust_def(state: &mut State) {
         .clang_arg("-march=native")
         .clang_arg("-Wno-everything")
         .rustfmt_bindings(true)
+        .opaque_type("max_align_t")
+        .opaque_type("rte_event.*")
         .generate()
         .unwrap()
         .write_to_file(target_path)
