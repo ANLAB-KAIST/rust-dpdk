@@ -12,7 +12,7 @@ pipeline {
         stage ("Check") {
             steps {
                 sh "rustfmt --check build.rs src/test.rs"
-                sh "cargo clippy -- -D warnings"
+                sh "cargo clippy"
             }
         }
         stage ("Build") {
