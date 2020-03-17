@@ -26,9 +26,9 @@ Please execute the command to build your DPDK applications.
 
 ## Issues
 
-List of failed bindgen builds (last update: 2019-11-13)
+List of failed bindgen builds (last update: 2020-03-18)
 
 * v0.48
 * v0.51
-* v0.53
+* v0.53 (clang-sys mismatch)
 
