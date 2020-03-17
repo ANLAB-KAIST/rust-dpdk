@@ -1,7 +1,7 @@
 [package]
 
 name = "rust-dpdk"
-version = "0.1.19081"
+version = "0.1.20021"
 authors = [ "Keunhong Lee <dlrmsghd@gmail.com>" ]
 
 homepage = "https://github.com/ANLAB-KAIST/rust-dpdk"
