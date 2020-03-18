@@ -44,7 +44,7 @@ fn check_compiler(state: &mut State) {
         .extend(message.lines().map(|x| String::from(x.trim())));
 }
 
-const STATIC_PREFIX: &'static str = "static_8a9f682d_";
+static STATIC_PREFIX: &str = "static_8a9f682d_";
 
 fn find_dpdk(state: &mut State) {
     if let Ok(path_string) = env::var("RTE_SDK") {
@@ -166,7 +166,7 @@ fn find_link_libs(state: &mut State) {
             continue;
         }
     }
-    if libs.len() < 1 {
+    if libs.is_empty() {
         //panic!("Cannot find any shared libraries. Check if DPDK is built with CONFIG_RTE_BUILD_SHARED_LIB=y option.");
         panic!("Cannot find any libraries.");
     }
@@ -183,16 +183,14 @@ fn check_direct_include(path: &Path) -> bool {
     let reader = BufReader::new(&file);
     for (_, line) in reader.lines().enumerate() {
         let line_str = line.ok().unwrap().trim().to_lowercase();
-        if line_str.starts_with("#error") {
-            if line_str.find("do not").is_some()
+        if line_str.starts_with("#error") && line_str.find("do not").is_some()
                 && line_str.find("include").is_some()
                 && line_str.find("directly").is_some()
             {
                 return false;
             }
-        }
     }
-    return true;
+    true
 }
 
 fn make_all_in_one_header(state: &mut State) {
@@ -227,7 +225,7 @@ fn make_all_in_one_header(state: &mut State) {
     }
     headers.sort();
     headers.dedup();
-    assert!(headers.len() > 0);
+    assert!(!headers.is_empty());
 
     // Heuristically remove platform-specific headers
     let mut name_set = vec![];
@@ -249,8 +247,8 @@ fn make_all_in_one_header(state: &mut State) {
     new_vec.sort_by(|left, right| {
         let left_str = left.file_stem().unwrap().to_str().unwrap();
         let right_str = right.file_stem().unwrap().to_str().unwrap();
-        let left_count = left_str.split("_").count();
-        let right_count = right_str.split("_").count();
+        let left_count = left_str.split('_').count();
+        let right_count = right_str.split('_').count();
         match left_count.cmp(&right_count) {
             Ordering::Equal => left_str.cmp(&right_str),
             Ordering::Less => Ordering::Less,
@@ -297,9 +295,9 @@ fn generate_static_impl(state: &mut State) {
         format!(
             "-I{}",
             state.include_path.as_ref().unwrap().to_str().unwrap()
-        )
-        .to_string(),
-        format!("-I{}", state.out_path.as_ref().unwrap().to_str().unwrap()).to_string(),
+        ),
+        //.to_string(),
+        format!("-I{}", state.out_path.as_ref().unwrap().to_str().unwrap()),//.to_string(),
         "-imacros".into(),
         state
             .dpdk_config
@@ -342,15 +340,15 @@ fn generate_static_impl(state: &mut State) {
                 let elem_type = type_.get_element_type().unwrap();
                 let array_size = type_.get_size().unwrap();
                 let name = name + &format!("[{}]", array_size);
-                return format_arg(elem_type, name);
+                format_arg(elem_type, name)
             }
             clang::TypeKind::IncompleteArray => {
                 let elem_type = type_.get_element_type().unwrap();
                 let name = name + "[]";
-                return format_arg(elem_type, name);
+                format_arg(elem_type, name)
             }
             _ => {
-                return format!("{} {}", type_.get_display_name().to_string(), name);
+                return format!("{} {}", type_.get_display_name(), name);
             }
         }
     }
@@ -368,7 +366,7 @@ fn generate_static_impl(state: &mut State) {
         if let (Some(clang::StorageClass::Static), Some(return_type), Some(name), true) =
             (storage_, return_type_, name_, is_decl)
         {
-            if name.starts_with("_") {
+            if name.starts_with('_') {
                 // Skip low level intrinsics
                 continue;
             }
@@ -377,15 +375,15 @@ fn generate_static_impl(state: &mut State) {
             let mut param_string = String::from("");
             let return_type_string = return_type.get_display_name();
             if let Some(args) = f.get_arguments() {
-                let mut counter = 0;
-                for arg in &args {
+                // let mut counter = 0;
+                for (counter, arg) in args.iter().enumerate() {
                     let arg_name = arg
                         .get_display_name()
-                        .unwrap_or(format!("_unnamed_arg{}", counter).to_string());
+                        .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
                     let type_ = arg.get_type().unwrap();
                     arg_string += &format!("{}, ", format_arg(type_, arg_name.clone()));
                     param_string += &format!("{}, ", arg_name);
-                    counter += 1;
+                    //counter += 1;
                 }
                 arg_string = arg_string.trim_end_matches(", ").to_string();
                 param_string = param_string.trim_end_matches(", ").to_string();
@@ -562,7 +560,7 @@ fn compile(state: &mut State) {
 
     if let Ok(env_string) = env::var("RUSTFLAGS") {
         if env_string.contains(&expected_env) {
-            return;
+            // return;
         } else {
             panic!(
                 "RUSTFLAGS env var is different from expected. Expected: {}, Current: {}.",
@@ -591,3 +589,4 @@ fn main() {
     generate_lib_rs(&mut state);
     compile(&mut state);
 }
+
