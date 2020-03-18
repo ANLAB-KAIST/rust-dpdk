@@ -183,12 +183,13 @@ fn check_direct_include(path: &Path) -> bool {
     let reader = BufReader::new(&file);
     for (_, line) in reader.lines().enumerate() {
         let line_str = line.ok().unwrap().trim().to_lowercase();
-        if line_str.starts_with("#error") && line_str.find("do not").is_some()
-                && line_str.find("include").is_some()
-                && line_str.find("directly").is_some()
-            {
-                return false;
-            }
+        if line_str.starts_with("#error")
+            && line_str.find("do not").is_some()
+            && line_str.find("include").is_some()
+            && line_str.find("directly").is_some()
+        {
+            return false;
+        }
     }
     true
 }
@@ -297,7 +298,7 @@ fn generate_static_impl(state: &mut State) {
             state.include_path.as_ref().unwrap().to_str().unwrap()
         ),
         //.to_string(),
-        format!("-I{}", state.out_path.as_ref().unwrap().to_str().unwrap()),//.to_string(),
+        format!("-I{}", state.out_path.as_ref().unwrap().to_str().unwrap()), //.to_string(),
         "-imacros".into(),
         state
             .dpdk_config
@@ -589,4 +590,3 @@ fn main() {
     generate_lib_rs(&mut state);
     compile(&mut state);
 }
-
