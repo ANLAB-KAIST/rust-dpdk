@@ -197,6 +197,7 @@ fn check_direct_include(path: &Path) -> bool {
 fn make_all_in_one_header(state: &mut State) {
     let include_dir = state.include_path.as_ref().unwrap();
     let dpdk_config = state.dpdk_config.as_ref().unwrap();
+    let blacklist = vec!["rte_function_versioning"];
     let mut headers = vec![];
     for entry in include_dir.read_dir().expect("read_dir failed") {
         if let Ok(entry) = entry {
@@ -204,6 +205,11 @@ fn make_all_in_one_header(state: &mut State) {
 
             if !path.is_file() {
                 continue;
+            }
+            if let Some(stem) = path.file_stem() {
+                if blacklist.contains(stem) {
+                    continue;
+                }
             }
 
             if let Some(ext) = path.extension() {
