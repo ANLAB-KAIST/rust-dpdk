@@ -43,4 +43,4 @@ RUN rm -rf /dpdk
 # https://bugs.launchpad.net/ubuntu/+source/llvm-defaults/+bug/1242300
 
 # For rust-dpdk build
-ENV RUSTFLAGS="-C link-arg=-L/usr/local/share/dpdk/${RTE_TARGET}/lib -C link-arg=-Wl,--whole-archive -C link-arg=-ldpdk -C link-arg=-Wl,--no-whole-archive -C link-arg=-lnuma -C link-arg=-lm -C link-arg=-lc"
+ENV RUSTFLAGS="-C link-arg=-L${RTE_SDK}/${RTE_TARGET}/lib -C link-arg=-Wl,--whole-archive -C link-arg=-ldpdk -C link-arg=-Wl,--no-whole-archive -C link-arg=-lnuma -C link-arg=-lm -C link-arg=-lc"
