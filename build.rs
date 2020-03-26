@@ -207,7 +207,7 @@ fn make_all_in_one_header(state: &mut State) {
                 continue;
             }
             if let Some(stem) = path.file_stem() {
-                if blacklist.contains(stem) {
+                if blacklist.contains(&stem.to_str().unwrap()) {
                     continue;
                 }
             }
