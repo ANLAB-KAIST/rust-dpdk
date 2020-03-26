@@ -1,9 +1,9 @@
 FROM debian:latest
 
 ENV RTE_SDK=/usr/local/share/dpdk/
-ENV RTE_TARGET=x86_64-native-linux-gcc
+ENV RTE_TARGET=x86_64-native-linux-clang
 
-RUN echo "APT last updated: 2020/03/18"
+RUN echo "APT last updated: 2020/03/27"
 
 RUN apt-get update -y && apt-get dist-upgrade -y && apt-get autoremove -y && apt-get autoclean -y
 RUN apt-get install -y linux-headers-amd64
@@ -43,4 +43,4 @@ RUN rm -rf /dpdk
 # https://bugs.launchpad.net/ubuntu/+source/llvm-defaults/+bug/1242300
 
 # For rust-dpdk build
-ENV RUSTFLAGS="-C link-arg=-L/usr/local/share/dpdk/x86_64-native-linux-gcc/lib -C link-arg=-Wl,--whole-archive -C link-arg=-ldpdk -C link-arg=-Wl,--no-whole-archive -C link-arg=-lnuma -C link-arg=-lm -C link-arg=-lc"
+ENV RUSTFLAGS="-C link-arg=-L/usr/local/share/dpdk/${RTE_TARGET}/lib -C link-arg=-Wl,--whole-archive -C link-arg=-ldpdk -C link-arg=-Wl,--no-whole-archive -C link-arg=-lnuma -C link-arg=-lm -C link-arg=-lc"
