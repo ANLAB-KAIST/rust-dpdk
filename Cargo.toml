@@ -1,7 +1,7 @@
 [package]
 
 name = "rust-dpdk"
-version = "0.1.19081"
+version = "0.1.20021"
 authors = [ "Keunhong Lee <dlrmsghd@gmail.com>" ]
 
 homepage = "https://github.com/ANLAB-KAIST/rust-dpdk"
@@ -18,7 +18,7 @@ Rust binding for Intel DPDK (under construction).
 bindgen = "= 0.47.3" # Test failed for 0.48 and 0.49
 num_cpus = "1"
 regex = "1"
-clang = { version = "*", features = ["runtime", "clang_3_6"] }
+clang = { version = "^0.21", features = ["runtime", "clang_3_6"] }
 cc = "1"
 
 [lib]
