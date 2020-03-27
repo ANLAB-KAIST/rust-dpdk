@@ -1,9 +1,9 @@
 FROM debian:latest
 
-ENV RTE_SDK=/usr/local/share/dpdk/
-ENV RTE_TARGET=x86_64-native-linux-gcc
+ENV RTE_SDK=/usr/local/share/dpdk
+ENV RTE_TARGET=x86_64-native-linux-clang
 
-RUN echo "APT last updated: 2020/03/18"
+RUN echo "APT last updated: 2020/03/27"
 
 RUN apt-get update -y && apt-get dist-upgrade -y && apt-get autoremove -y && apt-get autoclean -y
 RUN apt-get install -y linux-headers-amd64
@@ -30,7 +30,7 @@ RUN echo "CONFIG_RTE_EAL_IGB_UIO=n" >> config/common_linux
 RUN echo "CONFIG_RTE_KNI_KMOD=n" >> config/common_linux
 
 RUN echo "${RTE_TARGET}" > RTE_TARGET_EXPECTED
-RUN make defconfig | sed -r 's/(.*)\s(\w+)/\2/g' > RTE_TARGET
+RUN make config T="${RTE_TARGET}" | sed -r 's/(.*)\s(\w+)/\2/g' > RTE_TARGET
 RUN diff -w -q RTE_TARGET RTE_TARGET_EXPECTED
 RUN EXTRA_CFLAGS=" -fPIC " make -j$(nproc)
 RUN EXTRA_CFLAGS=" -fPIC " make -j$(nproc) install
@@ -43,4 +43,4 @@ RUN rm -rf /dpdk
 # https://bugs.launchpad.net/ubuntu/+source/llvm-defaults/+bug/1242300
 
 # For rust-dpdk build
-ENV RUSTFLAGS="-C link-arg=-L/usr/local/share/dpdk/x86_64-native-linux-gcc/lib -C link-arg=-Wl,--whole-archive -C link-arg=-ldpdk -C link-arg=-Wl,--no-whole-archive -C link-arg=-lnuma -C link-arg=-lm -C link-arg=-lc"
+ENV RUSTFLAGS="-C link-arg=-L${RTE_SDK}/${RTE_TARGET}/lib -C link-arg=-Wl,--whole-archive -C link-arg=-ldpdk -C link-arg=-Wl,--no-whole-archive -C link-arg=-lnuma -C link-arg=-lm -C link-arg=-lc"
