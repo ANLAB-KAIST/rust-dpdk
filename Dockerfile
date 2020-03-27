@@ -30,7 +30,7 @@ RUN echo "CONFIG_RTE_EAL_IGB_UIO=n" >> config/common_linux
 RUN echo "CONFIG_RTE_KNI_KMOD=n" >> config/common_linux
 
 RUN echo "${RTE_TARGET}" > RTE_TARGET_EXPECTED
-RUN make defconfig | sed -r 's/(.*)\s(\w+)/\2/g' > RTE_TARGET
+RUN make config T="${RTE_TARGET}" | sed -r 's/(.*)\s(\w+)/\2/g' > RTE_TARGET
 RUN diff -w -q RTE_TARGET RTE_TARGET_EXPECTED
 RUN EXTRA_CFLAGS=" -fPIC " make -j$(nproc)
 RUN EXTRA_CFLAGS=" -fPIC " make -j$(nproc) install
