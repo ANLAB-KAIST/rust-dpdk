@@ -1,6 +1,6 @@
 FROM debian:latest
 
-ENV RTE_SDK=/usr/local/share/dpdk/
+ENV RTE_SDK=/usr/local/share/dpdk
 ENV RTE_TARGET=x86_64-native-linux-clang
 
 RUN echo "APT last updated: 2020/03/27"
