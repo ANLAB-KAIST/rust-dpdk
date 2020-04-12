@@ -31,10 +31,11 @@
 - Build DPDK.
 
   ```sh
-  make defconfig
+  make config T=x86_64-native-linux-clang
   make -j         # build target: `./build`
 
-  # configure for clang? `make config T=x86_64-linux-clang`
+  # make defconfig --> Makes target x86_64-native-linux-gcc
+  # but gcc suffers segmentation fault, while clang doesn't (Not sure why...)
   ```
 
 - Allow `docker` to access huge pages. The script requires `root` privileges.
@@ -46,9 +47,10 @@
   sysctl -w vm.hugetlb_shm_group=${DOCKER_GID}
   sysctl -w vm.nr_hugepages=${NR_HUGE}
 
-  mkdir -p /mnt/huge
-  chgrp docker /mnt /mnt/huge
-  mount -t hugetlbfs -o gid=${DOCKER_GID},mode=1770 none /mnt/huge
+  # Create hugepage mount location on /mnt with non-default directory
+  mkdir -p /mnt/dpdk-hugepage
+  chgrp docker /mnt/dpdk-hugepage
+  mount -t hugetlbfs -o gid=${DOCKER_GID},mode=1770 none /mnt/dpdk-hugepage
   ```
 
     + TODO: make it persistent at `/etc/sysctl.conf`
@@ -83,7 +85,7 @@
 - Check if everything is okay by running a test docker image.
 
   ```sh
-  docker run --rm -it --privileged -v /mnt/huge:/mnt/huge anlabkaist/rust-dpdk:latest ${DPDK}/build/app/testpmd 
+  docker run --rm -it --privileged -v /mnt/dpdk-hugepage:/mnt/huge anlabkaist/rust-dpdk:latest ${DPDK}/build/app/testpmd 
   ```
 
     + Remove `--privileged`.
@@ -91,9 +93,9 @@
 - TODO: Run the dev docker image.
 
   ```sh
-  docker run -it --privileged -v /mnt/huge:/mnt/huge ubuntu:latest bash
+  docker run -it --privileged -v /mnt/dpdk-hugepage:/mnt/huge ubuntu:latest bash
   ```
-
+=
   ```sh
   # Build Container Image
   git clone https://{personal_token}@github.com/ANLAB-KAIST/FPS.git
