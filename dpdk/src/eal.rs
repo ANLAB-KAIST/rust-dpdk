@@ -76,7 +76,7 @@ impl Drop for EalInner {
     fn drop(&mut self) {
         // TODO: Release lock when repeating `eal_init` and `eal_cleanup` is stabilized.
         // See `Eal::new` for more information.
-        EalInner::INITIALIZED.store(false, Ordering::Release);
+        // EalInner::INITIALIZED.store(false, Ordering::Release);
 
         // Safety: foriegn function (safe unless there is a bug)
         unsafe {
