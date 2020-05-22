@@ -23,7 +23,6 @@ cc = "1"
 
 [lib]
 name = "dpdk_sys"
-path = "src/lib.rs"
 
 [[bin]]
 name = "dpdk_sys_test"

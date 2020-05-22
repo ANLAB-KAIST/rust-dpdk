@@ -14,7 +14,8 @@ description = """
 Rust wrapper for Intel DPDK (under construction).
 """
 
-[build-dependencies]
+[dependencies]
+rust-dpdk-sys = { path = "../dpdk-sys" }
 
 [lib]
 name = "dpdk"

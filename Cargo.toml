@@ -4,9 +4,3 @@ members = [
   "dpdk",
   "dpdk-sys"
 ]
-
-[profile.dev]
-rpath = true
-
-[profile.release]
-rpath = true
