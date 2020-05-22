@@ -11,7 +11,7 @@ license = "BSD-3-Clause"
 keywords = ["rust", "dpdk", "binding", "bindgen"]
 
 description = """
-Rust wrapper for Intel DPDK (under construction).
+Rust wrapper for Intel DPDK.
 """
 
 [dependencies]
@@ -19,3 +19,7 @@ rust-dpdk-sys = { path = "../dpdk-sys" }
 
 [lib]
 name = "dpdk"
+
+[[bin]]
+name = "dpdk_test"
+path = "bin/dpdk_test.rs"

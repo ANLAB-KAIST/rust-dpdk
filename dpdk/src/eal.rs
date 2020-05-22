@@ -14,3 +14,12 @@ struct EalInner {
 pub struct Eal {
     inner: Arc<EalInner>,
 }
+
+impl Eal {
+    /// Create an `Eal` instance.
+    ///
+    /// DPDK does not recommand users to repeat initialize and clear.
+    pub fn new(args: Vec<String>) -> Result<Self, ()> {
+        Err(())
+    }
+}

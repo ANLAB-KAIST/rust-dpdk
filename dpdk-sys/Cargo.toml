@@ -11,14 +11,14 @@ license = "BSD-3-Clause"
 keywords = ["rust", "dpdk", "binding", "bindgen"]
 
 description = """
-Rust binding for Intel DPDK (under construction).
+Rust binding for Intel DPDK.
 """
 
 [build-dependencies]
-bindgen = "= 0.47.3" # Test failed for 0.48 and 0.49
+bindgen = "= 0.47.3" # TODO: Verified failure for 0.48 and 0.49. Try 0.50 when available.
 num_cpus = "1"
 regex = "1"
-clang = { version = "^0.21", features = ["runtime", "clang_3_6"] }
+clang = { version = "0.21", features = ["runtime", "clang_3_6"] }
 cc = "1"
 
 [lib]
@@ -26,4 +26,4 @@ name = "dpdk_sys"
 
 [[bin]]
 name = "dpdk_sys_test"
-path = "bin/test.rs"
+path = "bin/dpdk_sys_test.rs"
