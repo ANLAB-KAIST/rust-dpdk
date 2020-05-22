@@ -9,11 +9,7 @@ use std::ptr;
 /// # Safety
 ///
 /// Safety depends on the safety of the target FFI function.
-pub unsafe fn run_with_args<
-    'a,
-    StringLike: 'a + AsRef<str>,
-    Argv: IntoIterator<Item = &'a StringLike>,
->(
+pub unsafe fn run_with_args<S: AsRef<str>, Argv: IntoIterator<Item = S>>(
     func: unsafe extern "C" fn(c_int, *mut *mut c_char) -> c_int,
     args: Argv,
 ) -> i32 {
