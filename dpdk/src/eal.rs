@@ -51,22 +51,22 @@ impl EalInner {
     fn new(args: &mut Vec<String>) -> Result<Self, EalError> {
         if EalInner::INITIALIZED
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
+            .is_err()
         {
-            // 1. DPDK returns number of consumed argc
-            // Safety: foriegn function (safe unless there is a bug)
-            let ret = unsafe { ffi::run_with_args(dpdk_sys::rte_eal_init, &*args) };
-            if ret < 0 {
-                Err(EalError::ErrorCode { code: ret })
-            } else {
-                // 2. Strip first n args and return the remaining
-                let _: Vec<_> = args.drain(..usize::try_from(ret).unwrap()).collect();
-                Ok(EalInner {
-                    shared: RwLock::new(EalSharedInner {}),
-                })
-            }
+            return Err(EalError::Singleton);
+        }
+
+        // 1. DPDK returns number of consumed argc
+        // Safety: foriegn function (safe unless there is a bug)
+        let ret = unsafe { ffi::run_with_args(dpdk_sys::rte_eal_init, &*args) };
+        if ret < 0 {
+            Err(EalError::ErrorCode { code: ret })
         } else {
-            Err(EalError::Singleton)
+            // 2. Strip first n args and return the remaining
+            let _: Vec<_> = args.drain(..usize::try_from(ret).unwrap()).collect();
+            Ok(EalInner {
+                shared: RwLock::new(EalSharedInner {}),
+            })
         }
     }
 }
