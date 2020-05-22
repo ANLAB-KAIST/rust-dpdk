@@ -3,7 +3,7 @@
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug)]
-struct EalSharedInner {}
+struct EalSharedInner {} // TODO Remove this if unnecessary
 
 #[derive(Debug)]
 struct EalInner {
