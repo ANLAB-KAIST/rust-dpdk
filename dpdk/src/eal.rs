@@ -3,6 +3,7 @@ use ffi;
 use std::convert::TryFrom;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
+use thiserror::Error;
 
 #[derive(Debug)]
 struct EalSharedInner {} // TODO Remove this if unnecessary
@@ -17,11 +18,11 @@ pub struct Eal {
     inner: Arc<EalInner>,
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum EalError {
-    #[fail(display = "EAL instance should be only created once")]
+    #[error("EAL instance should be only created once")]
     Singleton,
-    #[fail(display = "EAL function returned an error code: {}", code)]
+    #[error("EAL function returned an error code: {}", code)]
     ErrorCode { code: i32 },
 }
 

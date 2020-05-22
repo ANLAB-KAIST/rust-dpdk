@@ -1,5 +1,4 @@
-#[macro_use]
-extern crate failure;
+extern crate thiserror;
 
 mod ffi;
 
