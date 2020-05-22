@@ -1,0 +1,20 @@
+[package]
+
+name = "rust-dpdk"
+version = "0.2.20021"
+authors = ["Keunhong Lee <dlrmsghd@gmail.com>", "Jeehoon Kang <jeehoon.kang@kaist.ac.kr>", "ANLAB <support@an.kaist.ac.kr>"]
+publish = false
+homepage = "https://github.com/ANLAB-KAIST/rust-dpdk"
+repository = "https://github.com/ANLAB-KAIST/rust-dpdk"
+documentation = "https://github.com/ANLAB-KAIST/rust-dpdk"
+license = "BSD-3-Clause"
+keywords = ["rust", "dpdk", "binding", "bindgen"]
+
+description = """
+Rust wrapper for Intel DPDK (under construction).
+"""
+
+[build-dependencies]
+
+[lib]
+name = "dpdk"
