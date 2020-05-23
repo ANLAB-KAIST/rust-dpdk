@@ -1,0 +1,29 @@
+[package]
+
+name = "rust-dpdk-sys"
+version = "0.1.20021"
+authors = ["Keunhong Lee <dlrmsghd@gmail.com>", "Jeehoon Kang <jeehoon.kang@kaist.ac.kr>", "ANLAB <support@an.kaist.ac.kr>"]
+
+homepage = "https://github.com/ANLAB-KAIST/rust-dpdk"
+repository = "https://github.com/ANLAB-KAIST/rust-dpdk"
+documentation = "https://github.com/ANLAB-KAIST/rust-dpdk"
+license = "BSD-3-Clause"
+keywords = ["rust", "dpdk", "binding", "bindgen"]
+
+description = """
+Rust binding for Intel DPDK.
+"""
+
+[build-dependencies]
+bindgen = "= 0.47.3" # TODO: Verified failure for 0.48 and 0.49. Try 0.50 when available.
+num_cpus = "1"
+regex = "1"
+clang = { version = "0.21", features = ["runtime", "clang_3_6"] }
+cc = "1"
+
+[lib]
+name = "dpdk_sys"
+
+[[bin]]
+name = "dpdk_sys_test"
+path = "bin/dpdk_sys_test.rs"

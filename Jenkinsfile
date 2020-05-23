@@ -11,15 +11,24 @@ pipeline {
         }
         stage ("Check") {
             steps {
-                sh "rustfmt --check build.rs src/test.rs"
-                sh "cargo clippy -- -D warnings"
+                sh 'cargo check'
+                sh 'cargo fmt --all -- --check'
+                sh 'cargo clippy -- -D warnings'
             }
         }
         stage ("Build") {
             steps {
                 sh "cargo build"
+            }
+        }
+        stage ("Test (common)") {
+            steps {
                 sh "cargo test --lib"
-                sh "cargo run -- --no-pci --no-huge"
+            }
+        }
+        stage ("Test (dpdk-sys)") {
+            steps {
+                sh "cargo run -p rust-dpdk-sys -- --no-pci --no-huge"
             }
         }
     }
