@@ -373,7 +373,7 @@ fn generate_static_impl_and_link_pmd(state: &mut State) {
         let is_decl = f.is_definition();
         match (storage_, return_type_, name_, is_decl) {
             (Some(clang::StorageClass::None), _, Some(name), false) => {
-                println!("cargo:warning=none storageclass {:?}", name);
+                //println!("cargo:warning=none storageclass {:?}", name);
                 if name.starts_with('_') {
                     // Skip low level intrinsics
                     continue;
