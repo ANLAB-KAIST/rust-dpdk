@@ -290,7 +290,7 @@ fn make_all_in_one_header(state: &mut State) {
     target.write_fmt(format_args!("{}", formatted_string)).ok();
 }
 
-fn generate_static_impl(state: &mut State) {
+fn generate_static_impl_and_link_pmd(state: &mut State) {
     let clang = clang::Clang::new().unwrap();
 
     let index = clang::Index::new(&clang, true, true);
@@ -335,6 +335,7 @@ fn generate_static_impl(state: &mut State) {
         panic!(format!("Encountering {} fatal parse errors", fatal_count));
     }
 
+    let mut persist_link_list = vec![];
     let mut static_def_list = vec![];
     let mut static_impl_list = vec![];
 
@@ -370,44 +371,58 @@ fn generate_static_impl(state: &mut State) {
         let storage_ = f.get_storage_class();
         let return_type_ = f.get_result_type();
         let is_decl = f.is_definition();
-        if let (Some(clang::StorageClass::Static), Some(return_type), Some(name), true) =
-            (storage_, return_type_, name_, is_decl)
-        {
-            if name.starts_with('_') {
-                // Skip low level intrinsics
+        match (storage_, return_type_, name_, is_decl) {
+            (Some(clang::StorageClass::None), _, Some(name), false) => {
+                println!("cargo:warning=none storageclass {:?}", name);
+                if name.starts_with('_') {
+                    // Skip low level intrinsics
+                    continue;
+                }
+                if !name.starts_with("rte_pmd_") {
+                    continue;
+                }
+                persist_link_list.push(name);
+            }
+            (Some(clang::StorageClass::Static), Some(return_type), Some(name), true) => {
+                if name.starts_with('_') {
+                    // Skip low level intrinsics
+                    continue;
+                }
+                //println!("cargo:warning={:?}", name);
+                let mut arg_string = String::from("");
+                let mut param_string = String::from("");
+                let return_type_string = return_type.get_display_name();
+                if let Some(args) = f.get_arguments() {
+                    // let mut counter = 0;
+                    for (counter, arg) in args.iter().enumerate() {
+                        let arg_name = arg
+                            .get_display_name()
+                            .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
+                        let type_ = arg.get_type().unwrap();
+                        arg_string += &format!("{}, ", format_arg(type_, arg_name.clone()));
+                        param_string += &format!("{}, ", arg_name);
+                        //counter += 1;
+                    }
+                    arg_string = arg_string.trim_end_matches(", ").to_string();
+                    param_string = param_string.trim_end_matches(", ").to_string();
+                }
+                static_def_list.push(format!(
+                    "{ret} {prefix}{name} ({args})",
+                    ret = return_type_string,
+                    prefix = STATIC_PREFIX,
+                    name = name,
+                    args = arg_string
+                ));
+                static_impl_list.push(format!(
+                    "{{ return {name}({params}); }}",
+                    name = name,
+                    params = param_string
+                ));
+                state.static_functions.push(name.clone());
+            }
+            _ => {
                 continue;
             }
-            //println!("cargo:warning={:?}", name);
-            let mut arg_string = String::from("");
-            let mut param_string = String::from("");
-            let return_type_string = return_type.get_display_name();
-            if let Some(args) = f.get_arguments() {
-                // let mut counter = 0;
-                for (counter, arg) in args.iter().enumerate() {
-                    let arg_name = arg
-                        .get_display_name()
-                        .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
-                    let type_ = arg.get_type().unwrap();
-                    arg_string += &format!("{}, ", format_arg(type_, arg_name.clone()));
-                    param_string += &format!("{}, ", arg_name);
-                    //counter += 1;
-                }
-                arg_string = arg_string.trim_end_matches(", ").to_string();
-                param_string = param_string.trim_end_matches(", ").to_string();
-            }
-            static_def_list.push(format!(
-                "{ret} {prefix}{name} ({args})",
-                ret = return_type_string,
-                prefix = STATIC_PREFIX,
-                name = name,
-                args = arg_string
-            ));
-            static_impl_list.push(format!(
-                "{{ return {name}({params}); }}",
-                name = name,
-                params = param_string
-            ));
-            state.static_functions.push(name.clone());
         }
     }
 
@@ -430,6 +445,12 @@ fn generate_static_impl(state: &mut State) {
         header_defs += &format!("{};\n", def_);
         static_impls += &format!("{}{}\n", def_, impl_);
     }
+    let mut perlist_links = String::new();
+    for name in persist_link_list.iter() {
+        perlist_links += &format!("void* persist_{}() {{\n", name);
+        perlist_links += &format!("\treturn {};\n", name);
+        perlist_links += &format!("}}\n");
+    }
 
     let mut template = File::open(header_template).unwrap();
     let mut template_string = String::new();
@@ -442,6 +463,7 @@ fn generate_static_impl(state: &mut State) {
     let mut template_string = String::new();
     template.read_to_string(&mut template_string).ok();
     let formatted_string = template_string.replace("%static_impls%", &static_impls);
+    let formatted_string = formatted_string.replace("%persist_pmds%", &perlist_links);
     let mut target = File::create(source_path).unwrap();
     target.write_fmt(format_args!("{}", &formatted_string)).ok();
 }
@@ -516,6 +538,15 @@ fn compile(state: &mut State) {
     let dpdk_config = state.dpdk_config.as_ref().unwrap();
     let source_path = out_path.join("static.c");
     let lib_path = state.library_path.as_ref().unwrap();
+
+    if !lib_path.join("libdpdk.a").exists() {
+        panic!("libdpdk.a is not found in library path.");
+    }
+
+    println!("cargo:rustc-link-search={}", lib_path.to_str().unwrap());
+    println!("cargo:rustc-link-lib=dpdk");
+    println!("cargo:rustc-link-lib=numa");
+
     cc::Build::new()
         .file(source_path)
         .static_flag(true)
@@ -528,55 +559,6 @@ fn compile(state: &mut State) {
         .flag("-imacros")
         .flag(dpdk_config.to_str().unwrap())
         .compile("lib_static_wrapper.a");
-
-    let mut link_list = String::new();
-    if lib_path.join("libdpdk.a").exists() {
-        link_list += " -C link-arg=-ldpdk";
-    //println!("cargo:rustc-link-lib=dpdk");
-    } else {
-        // legacy mode
-        //let format = Regex::new(r"lib(.*)\.(so)").unwrap();
-        let format = Regex::new(r"lib(.*)\.(a)").unwrap();
-        for link in &state.dpdk_links {
-            let lib_name = link.file_name().unwrap().to_str().unwrap();
-
-            if let Some(capture) = format.captures(lib_name) {
-                let link_name = &capture[1];
-                if link_name == "dpdk" {
-                    continue;
-                }
-                link_list += &format!(" -C link-arg=-l{}", link_name);
-                //println!("cargo:rustc-link-lib={}", link_name);
-            }
-        }
-    }
-
-    let mut additional_libs = String::new();
-    let additional_libs_list = vec!["numa", "m", "c"];
-    for lib in &additional_libs_list {
-        //println!("cargo:rustc-link-lib={}", lib);
-        additional_libs += &format!(" -C link-arg=-l{}", lib);
-    }
-
-    let expected_env = format!(
-        "-C link-arg=-L{} -C link-arg=-Wl,--whole-archive{} -C link-arg=-Wl,--no-whole-archive{}",
-        lib_path.to_str().unwrap(),
-        &link_list,
-        &additional_libs
-    );
-
-    if let Ok(env_string) = env::var("RUSTFLAGS") {
-        if env_string.contains(&expected_env) {
-            // return;
-        } else {
-            panic!(
-                "RUSTFLAGS env var is different from expected. Expected: {}, Current: {}.",
-                expected_env, env_string
-            );
-        }
-    } else {
-        panic!("RUSTFLAGS env var is not set. Please set via following command:\nexport RUSTFLAGS=\"{}\"", expected_env);
-    }
 }
 fn main() {
     let mut state: State = Default::default();
@@ -591,7 +573,7 @@ fn main() {
     find_dpdk(&mut state);
     find_link_libs(&mut state);
     make_all_in_one_header(&mut state);
-    generate_static_impl(&mut state);
+    generate_static_impl_and_link_pmd(&mut state);
     generate_rust_def(&mut state);
     generate_lib_rs(&mut state);
     compile(&mut state);
