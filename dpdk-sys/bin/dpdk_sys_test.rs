@@ -4,17 +4,17 @@ use std::os::raw::*;
 
 fn main() {
     unsafe {
-        let argv: Vec<_> = env::args()
+        let c_argv: Vec<_> = env::args()
             .map(ffi::CString::new)
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        let argv: Vec<_> = argv
+        println!("{:?}", c_argv);
+        let argv: Vec<_> = c_argv
             .iter()
             .map(|arg| arg.as_bytes_with_nul().as_ptr() as *mut c_char)
             .chain(std::iter::once(std::ptr::null_mut()))
             .collect();
-        let argc = argv.len();
-
+        let argc = c_argv.len();
         let ret = dpdk_sys::rte_eal_init(argc as c_int, argv.as_ptr() as *mut *mut c_char);
         assert!(ret >= 0);
         println!("{:?}", dpdk_sys::pmd_list());

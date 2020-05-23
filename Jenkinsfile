@@ -28,7 +28,7 @@ pipeline {
         }
         stage ("Test (dpdk-sys)") {
             steps {
-                sh "cargo run -p rust-dpdk_sys -- --no-pci --no-huge"
+                sh "cargo run -p rust-dpdk-sys -- --no-pci --no-huge"
             }
         }
     }
