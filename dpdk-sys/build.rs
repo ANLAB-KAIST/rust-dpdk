@@ -1,9 +1,11 @@
 extern crate bindgen;
 extern crate cc;
 extern crate clang;
+extern crate etrace;
 extern crate num_cpus;
 extern crate regex;
 
+use etrace::some_or;
 use regex::Regex;
 use std::cmp::Ordering;
 use std::env;
@@ -12,24 +14,40 @@ use std::io::*;
 use std::path::*;
 use std::process::Command;
 
+/// Information needed to generate DPDK binding.
+///
+/// Each information is filled at different build stages.
 #[derive(Default)]
 struct State {
+    // Location of this crate.
     project_path: Option<PathBuf>,
+    // Location of generated files.
     out_path: Option<PathBuf>,
+    // Essential link path for C standard library.
     system_include_path: Vec<String>,
+    // DPDK include folder.
     include_path: Option<PathBuf>,
+    // DPDK lib folder.
     library_path: Option<PathBuf>,
+    // List of DPDK header files.
     dpdk_headers: Vec<PathBuf>,
+    // List of DPDK lib files.
     dpdk_links: Vec<PathBuf>,
+    // DPDK config file (will be included as a predefined macro file).
     dpdk_config: Option<PathBuf>,
+    // Names of static functions.
     static_functions: Vec<String>,
 }
 
+/// Check current OS.
+///
+/// Currently, we only accept linux.
 fn check_os(_: &mut State) {
     #[cfg(not(unix))]
     panic!("Currently, only xnix OS is supported.");
 }
 
+/// Check compiler and retrieve link path for C standard libs.
 fn check_compiler(state: &mut State) {
     let output = Command::new("bash")
         .args(&[
@@ -44,8 +62,17 @@ fn check_compiler(state: &mut State) {
         .extend(message.lines().map(|x| String::from(x.trim())));
 }
 
+/// We make static functions to have linkable symbols.
+/// To avoid collision, we add a magic number to all symbols.
 static STATIC_PREFIX: &str = "static_8a9f682d_";
 
+/// Find DPDK install path.
+///
+/// 1. If `RTE_SDK` is set, find its installed directory.
+/// 2. If `RTE_TARGET` is set, DPDK is at `RTE_SDK/RTE_TARGET`.
+/// 3. If not set, default `RTE_TARGET` is `build`.
+/// 4. If DPDK is installed at `/usr/local/include/dpdk`, use it.
+/// 5. If none is found, download from `https://github.com/DPDK/dpdk.git`.
 fn find_dpdk(state: &mut State) {
     if let Ok(path_string) = env::var("RTE_SDK") {
         let mut dpdk_path = PathBuf::from(path_string);
@@ -133,6 +160,7 @@ fn find_dpdk(state: &mut State) {
     state.dpdk_config = Some(config_header);
 }
 
+/// Search through DPDK's link dir and extract library names.
 fn find_link_libs(state: &mut State) {
     let lib_dir = state.library_path.as_ref().unwrap();
 
@@ -175,6 +203,9 @@ fn find_link_libs(state: &mut State) {
     state.dpdk_links = libs;
 }
 
+/// Some DPDK headers are not intended to be directly included.
+///
+/// Heuristically check whether a header allows it to be directly included.
 fn check_direct_include(path: &Path) -> bool {
     if !path.is_file() {
         return false;
@@ -194,6 +225,7 @@ fn check_direct_include(path: &Path) -> bool {
     true
 }
 
+/// Prepare a header file which contains all available DPDK headers.
 fn make_all_in_one_header(state: &mut State) {
     let include_dir = state.include_path.as_ref().unwrap();
     let dpdk_config = state.dpdk_config.as_ref().unwrap();
@@ -290,7 +322,8 @@ fn make_all_in_one_header(state: &mut State) {
     target.write_fmt(format_args!("{}", formatted_string)).ok();
 }
 
-fn generate_static_impl_and_link_pmd(state: &mut State) {
+/// Generate wrappers for static functions and create persistent link for PMDs.
+fn generate_static_impls_and_link_pmds(state: &mut State) {
     let clang = clang::Clang::new().unwrap();
 
     let index = clang::Index::new(&clang, true, true);
@@ -367,45 +400,37 @@ fn generate_static_impl_and_link_pmd(state: &mut State) {
         .into_iter()
         .filter(|e| e.get_kind() == clang::EntityKind::FunctionDecl)
     {
-        let name_ = f.get_name();
-        let storage_ = f.get_storage_class();
-        let return_type_ = f.get_result_type();
+        let name = some_or!(f.get_name(), continue);
+        let storage = some_or!(f.get_storage_class(), continue);
+        let return_type = some_or!(f.get_result_type(), continue);
         let is_decl = f.is_definition();
-        match (storage_, return_type_, name_, is_decl) {
-            (Some(clang::StorageClass::None), _, Some(name), false) => {
-                //println!("cargo:warning=none storageclass {:?}", name);
-                if name.starts_with('_') {
-                    // Skip low level intrinsics
-                    continue;
-                }
+        match (storage, is_decl) {
+            (clang::StorageClass::None, false) => {
                 if !name.starts_with("rte_pmd_") {
                     continue;
                 }
                 persist_link_list.push(name);
             }
-            (Some(clang::StorageClass::Static), Some(return_type), Some(name), true) => {
+            (clang::StorageClass::Static, true) => {
                 if name.starts_with('_') {
                     // Skip low level intrinsics
                     continue;
                 }
-                //println!("cargo:warning={:?}", name);
-                let mut arg_string = String::from("");
-                let mut param_string = String::from("");
+                let mut arg_strings = Vec::new();
+                let mut param_strings = Vec::new();
                 let return_type_string = return_type.get_display_name();
                 if let Some(args) = f.get_arguments() {
-                    // let mut counter = 0;
                     for (counter, arg) in args.iter().enumerate() {
                         let arg_name = arg
                             .get_display_name()
                             .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
                         let type_ = arg.get_type().unwrap();
-                        arg_string += &format!("{}, ", format_arg(type_, arg_name.clone()));
-                        param_string += &format!("{}, ", arg_name);
-                        //counter += 1;
+                        arg_strings.push(format_arg(type_, arg_name.clone()));
+                        param_strings.push(arg_name);
                     }
-                    arg_string = arg_string.trim_end_matches(", ").to_string();
-                    param_string = param_string.trim_end_matches(", ").to_string();
                 }
+                let arg_string = arg_strings.join(", ");
+                let param_string = param_strings.join(", ");
                 static_def_list.push(format!(
                     "{ret} {prefix}{name} ({args})",
                     ret = return_type_string,
@@ -446,7 +471,7 @@ fn generate_static_impl_and_link_pmd(state: &mut State) {
         static_impls += &format!("{}{}\n", def_, impl_);
     }
     let mut perlist_links = String::new();
-    for name in persist_link_list.iter() {
+    for name in &persist_link_list {
         perlist_links += &format!("void* persist_{}() {{\n", name);
         perlist_links += &format!("\treturn {};\n", name);
         perlist_links += &format!("}}\n");
@@ -468,6 +493,7 @@ fn generate_static_impl_and_link_pmd(state: &mut State) {
     target.write_fmt(format_args!("{}", &formatted_string)).ok();
 }
 
+/// Generate Rust bindings from DPDK source.
 fn generate_rust_def(state: &mut State) {
     let dpdk_include_path = state.include_path.as_ref().unwrap();
     let dpdk_config_path = state.dpdk_config.as_ref().unwrap();
@@ -492,6 +518,7 @@ fn generate_rust_def(state: &mut State) {
         .ok();
 }
 
+/// Generate Rust source files.
 fn generate_lib_rs(state: &mut State) {
     let project_path = state.project_path.as_ref().unwrap();
     let template_path = project_path.join("gen/lib.rs.template");
@@ -532,6 +559,7 @@ fn generate_lib_rs(state: &mut State) {
     target.write_fmt(format_args!("{}", formatted_string)).ok();
 }
 
+/// Do compile.
 fn compile(state: &mut State) {
     let out_path = state.out_path.as_ref().unwrap();
     let dpdk_include_path = state.include_path.as_ref().unwrap();
@@ -560,6 +588,7 @@ fn compile(state: &mut State) {
         .flag(dpdk_config.to_str().unwrap())
         .compile("lib_static_wrapper.a");
 }
+
 fn main() {
     let mut state: State = Default::default();
     state.project_path = Some(PathBuf::from(".").canonicalize().unwrap());
@@ -573,7 +602,7 @@ fn main() {
     find_dpdk(&mut state);
     find_link_libs(&mut state);
     make_all_in_one_header(&mut state);
-    generate_static_impl_and_link_pmd(&mut state);
+    generate_static_impls_and_link_pmds(&mut state);
     generate_rust_def(&mut state);
     generate_lib_rs(&mut state);
     compile(&mut state);
