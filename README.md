@@ -5,6 +5,17 @@
 Tested with <https://github.com/rust-lang/rust-bindgen> v0.47.
 Tested with <https://github.com/DPDK/dpdk.git> v20.02.
 
+## Goals
+
+There are other `rust-dpdk` implementations and you may choose most proper implementation to your purpose.
+(https://github.com/flier/rust-dpdk, https://github.com/netsys/netbricks)
+This library is built for following design goals.
+
+1. Minimize hand-written binding code.
+1. Do not include `bindgen`'s output in this repository.
+1. Statically link DPDK libraries instead of using shared libraries.
+1. (TODO) Rust wrapper (`rust-dpdk`) for low-level DPDK APIs (`rust-dpdk-sys`).
+
 ## Prerequisites
 
 First, this library depends on Intel Data Plane Development Kit (DPDK).
