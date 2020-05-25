@@ -426,7 +426,7 @@ impl State {
             if storage == clang::StorageClass::None && !is_decl && name.starts_with("rte_pmd_") {
                 // non-static function definition for a PMD is found.
                 persist_link_list.push(name);
-            } else if storage == clang::StorageClass::Static && is_decl && !name.starts_with("_") {
+            } else if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
                 // Declaration of static function is found (skip if function name starts with _).
                 let mut arg_strings = Vec::new();
                 let mut param_strings = Vec::new();
@@ -474,7 +474,7 @@ impl State {
         for name in &persist_link_list {
             perlist_links += &format!("void* persist_{}() {{\n", name);
             perlist_links += &format!("\treturn {};\n", name);
-            perlist_links += &format!("}}\n");
+            perlist_links += &"}}\n";
         }
 
         let mut template = File::open(header_template).unwrap();
@@ -531,7 +531,7 @@ impl State {
                 let link_name = link.file_stem().unwrap().to_str().unwrap();
                 format
                     .captures(link_name)
-                    .map(|capture| format!("\"{}\"", &capture[1]).to_string())
+                    .map(|capture| format!("\"{}\"", &capture[1]))
             })
             .collect();
 
@@ -546,7 +546,6 @@ impl State {
                     prefix = STATIC_PREFIX,
                     name = name
                 )
-                .to_string()
             })
             .collect::<Vec<_>>()
             .join("\n");
