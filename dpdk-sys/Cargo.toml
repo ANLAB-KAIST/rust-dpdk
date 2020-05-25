@@ -22,6 +22,9 @@ clang = { version = "0.21", features = ["runtime", "clang_3_6"] }
 cc = "1"
 etrace = "1"
 
+[features]
+default = []
+
 [lib]
 name = "dpdk_sys"
 

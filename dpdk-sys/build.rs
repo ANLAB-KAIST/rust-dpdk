@@ -95,7 +95,7 @@ impl State {
     /// Check current OS.
     ///
     /// Currently, we only accept linux.
-    fn check_os(&mut self) {
+    fn check_os(&self) {
         #[cfg(not(unix))]
         panic!("Currently, only xnix OS is supported.");
     }
@@ -422,50 +422,40 @@ impl State {
             let storage = some_or!(f.get_storage_class(), continue);
             let return_type = some_or!(f.get_result_type(), continue);
             let is_decl = f.is_definition();
-            match (storage, is_decl) {
-                (clang::StorageClass::None, false) => {
-                    if !name.starts_with("rte_pmd_") {
-                        continue;
+
+            if storage == clang::StorageClass::None && !is_decl && name.starts_with("rte_pmd_") {
+                // non-static function definition for a PMD is found.
+                persist_link_list.push(name);
+            } else if storage == clang::StorageClass::Static && is_decl && !name.starts_with("_") {
+                // Declaration of static function is found (skip if function name starts with _).
+                let mut arg_strings = Vec::new();
+                let mut param_strings = Vec::new();
+                let return_type_string = return_type.get_display_name();
+                if let Some(args) = f.get_arguments() {
+                    for (counter, arg) in args.iter().enumerate() {
+                        let arg_name = arg
+                            .get_display_name()
+                            .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
+                        let type_ = arg.get_type().unwrap();
+                        arg_strings.push(format_arg(type_, arg_name.clone()));
+                        param_strings.push(arg_name);
                     }
-                    persist_link_list.push(name);
                 }
-                (clang::StorageClass::Static, true) => {
-                    if name.starts_with('_') {
-                        // Skip low level intrinsics
-                        continue;
-                    }
-                    let mut arg_strings = Vec::new();
-                    let mut param_strings = Vec::new();
-                    let return_type_string = return_type.get_display_name();
-                    if let Some(args) = f.get_arguments() {
-                        for (counter, arg) in args.iter().enumerate() {
-                            let arg_name = arg
-                                .get_display_name()
-                                .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
-                            let type_ = arg.get_type().unwrap();
-                            arg_strings.push(format_arg(type_, arg_name.clone()));
-                            param_strings.push(arg_name);
-                        }
-                    }
-                    let arg_string = arg_strings.join(", ");
-                    let param_string = param_strings.join(", ");
-                    static_def_list.push(format!(
-                        "{ret} {prefix}{name} ({args})",
-                        ret = return_type_string,
-                        prefix = STATIC_PREFIX,
-                        name = name,
-                        args = arg_string
-                    ));
-                    static_impl_list.push(format!(
-                        "{{ return {name}({params}); }}",
-                        name = name,
-                        params = param_string
-                    ));
-                    self.static_functions.push(name.clone());
-                }
-                _ => {
-                    continue;
-                }
+                let arg_string = arg_strings.join(", ");
+                let param_string = param_strings.join(", ");
+                static_def_list.push(format!(
+                    "{ret} {prefix}{name} ({args})",
+                    ret = return_type_string,
+                    prefix = STATIC_PREFIX,
+                    name = name,
+                    args = arg_string
+                ));
+                static_impl_list.push(format!(
+                    "{{ return {name}({params}); }}",
+                    name = name,
+                    params = param_string
+                ));
+                self.static_functions.push(name.clone());
             }
         }
 
@@ -534,27 +524,32 @@ impl State {
 
         let format = Regex::new(r"rte_pmd_(\w+)").unwrap();
 
-        let mut pmds = vec![];
-        for link in &self.dpdk_links {
-            let link_name = link.file_stem().unwrap().to_str().unwrap();
-            if let Some(capture) = format.captures(link_name) {
-                pmds.push(String::from(&capture[1]));
-            }
-        }
+        let pmds: Vec<_> = self
+            .dpdk_links
+            .iter()
+            .filter_map(|link| {
+                let link_name = link.file_stem().unwrap().to_str().unwrap();
+                format
+                    .captures(link_name)
+                    .map(|capture| format!("\"{}\"", &capture[1]).to_string())
+            })
+            .collect();
 
-        let mut pmds_string = String::new();
-        for pmd in pmds {
-            pmds_string += &format!("\n\"{}\",", pmd);
-        }
+        let pmds_string = pmds.join(",\n");
 
-        let mut static_use_string = String::new();
-        for name in &self.static_functions {
-            static_use_string += &format!(
-                "pub use dpdk::{prefix}{name} as {name};\n",
-                prefix = STATIC_PREFIX,
-                name = name
-            );
-        }
+        let static_use_string = self
+            .static_functions
+            .iter()
+            .map(|name| {
+                format!(
+                    "pub use dpdk::{prefix}{name} as {name};",
+                    prefix = STATIC_PREFIX,
+                    name = name
+                )
+                .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let mut template = File::open(template_path).unwrap();
         let mut template_string = String::new();
