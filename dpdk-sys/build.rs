@@ -464,18 +464,25 @@ impl State {
         let source_path = self.out_path.join("static.c");
         let source_template = self.project_path.join("gen/static.c.template");
 
-        let mut header_defs = String::new();
-        let mut static_impls = String::new();
-        for (def_, impl_) in Iterator::zip(static_def_list.iter(), static_impl_list.iter()) {
-            header_defs += &format!("{};\n", def_);
-            static_impls += &format!("{}{}\n", def_, impl_);
-        }
-        let mut perlist_links = String::new();
-        for name in &persist_link_list {
-            perlist_links += &format!("void* persist_{}() {{\n", name);
-            perlist_links += &format!("\treturn {};\n", name);
-            perlist_links += &"}\n";
-        }
+        let header_defs = static_def_list
+            .iter()
+            .map(|def_| format!("{};", def_))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let static_impls = Iterator::zip(static_def_list.iter(), static_impl_list.iter())
+            .map(|(def_, decl_)| format!("{}{}", def_, decl_))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let perlist_links = persist_link_list
+            .iter()
+            .map(|name| {
+                format!(
+                    "void* persist_{name}() {{\n\treturn {name};\n}}",
+                    name = name
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let mut template = File::open(header_template).unwrap();
         let mut template_string = String::new();
