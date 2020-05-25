@@ -474,7 +474,7 @@ impl State {
         for name in &persist_link_list {
             perlist_links += &format!("void* persist_{}() {{\n", name);
             perlist_links += &format!("\treturn {};\n", name);
-            perlist_links += &"}}\n";
+            perlist_links += &"}\n";
         }
 
         let mut template = File::open(header_template).unwrap();
