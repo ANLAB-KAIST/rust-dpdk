@@ -18,6 +18,10 @@ use std::process::Command;
 /// To avoid collision, we add a magic number to all symbols.
 static STATIC_PREFIX: &str = "static_8a9f682d_";
 
+/// We make explicit references to PMDs to prevent them to be removed duing linking.
+/// To avoid collision, we add a magic number to all symbols.
+static PERSIST_PREFIX: &str = "persist_91a6476e_";
+
 /// Some DPDK headers are not intended to be directly included.
 ///
 /// Heuristically check whether a header allows it to be directly included.
@@ -71,6 +75,9 @@ struct State {
 
     /// Names of static functions.
     static_functions: Vec<String>,
+
+    /// Names of persist functions.
+    persist_functions: Vec<String>,
 }
 
 impl State {
@@ -89,6 +96,7 @@ impl State {
             dpdk_links: Default::default(),
             dpdk_config: Default::default(),
             static_functions: Default::default(),
+            persist_functions: Default::default(),
         }
     }
 
@@ -386,7 +394,6 @@ impl State {
             panic!(format!("Encountering {} fatal parse errors", fatal_count));
         }
 
-        let mut persist_link_list = vec![];
         let mut static_def_list = vec![];
         let mut static_impl_list = vec![];
 
@@ -425,7 +432,7 @@ impl State {
 
             if storage == clang::StorageClass::None && !is_decl && name.starts_with("rte_pmd_") {
                 // non-static function definition for a PMD is found.
-                persist_link_list.push(name);
+                self.persist_functions.push(name);
             } else if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
                 // Declaration of static function is found (skip if function name starts with _).
                 let mut arg_strings = Vec::new();
@@ -473,11 +480,13 @@ impl State {
             .map(|(def_, decl_)| format!("{}{}", def_, decl_))
             .collect::<Vec<_>>()
             .join("\n");
-        let perlist_links = persist_link_list
+        let perlist_links = self
+            .persist_functions
             .iter()
             .map(|name| {
                 format!(
-                    "void* persist_{name}() {{\n\treturn {name};\n}}",
+                    "void* {prefix}{name}() {{\n\treturn {name};\n}}",
+                    prefix = PERSIST_PREFIX,
                     name = name
                 )
             })
@@ -557,12 +566,26 @@ impl State {
             .collect::<Vec<_>>()
             .join("\n");
 
+        let persist_use_string = self
+            .persist_functions
+            .iter()
+            .map(|name| {
+                format!(
+                    "\tpub fn {prefix}{name}() -> *mut ::std::os::raw::c_void;",
+                    prefix = PERSIST_PREFIX,
+                    name = name
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
         let mut template = File::open(template_path).unwrap();
         let mut template_string = String::new();
         template.read_to_string(&mut template_string).ok();
 
         let formatted_string = template_string.replace("%pmd_list%", &pmds_string);
         let formatted_string = formatted_string.replace("%static_use_defs%", &static_use_string);
+        let formatted_string = formatted_string.replace("%persist_use_defs%", &persist_use_string);
 
         let mut target = File::create(target_path).unwrap();
         target.write_fmt(format_args!("{}", formatted_string)).ok();

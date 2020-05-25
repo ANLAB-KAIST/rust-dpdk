@@ -1,6 +1,10 @@
 
 %static_use_defs%
 
+extern "C" {
+%persist_use_defs%
+}
+
 /// Get all PMD(poll-mode driver)'s name.
 #[inline]
 pub fn pmd_list() -> Vec<String> {
