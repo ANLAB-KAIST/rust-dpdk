@@ -16,8 +16,8 @@ Rust wrapper for Intel DPDK.
 
 [dependencies]
 rust-dpdk-sys = { path = "../dpdk-sys" }
-thiserror = "1.0"
-etrace = ""
+thiserror = "1"
+etrace = "1"
 
 [lib]
 name = "dpdk"

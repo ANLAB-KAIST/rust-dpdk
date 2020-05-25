@@ -5,15 +5,58 @@
 Tested with <https://github.com/rust-lang/rust-bindgen> v0.47.
 Tested with <https://github.com/DPDK/dpdk.git> v20.02.
 
+## Goals
 
-## How to use
+There are other `rust-dpdk` implementations and you may choose most proper implementation to your purpose.
+(https://github.com/flier/rust-dpdk, https://github.com/netsys/netbricks)
+This library is built for following design goals.
 
-DPDK should be built with `EXTRA_CFLAGS=" -fPIC "` flag.
+1. Minimize hand-written binding code.
+1. Do not include `bindgen`'s output in this repository.
+1. Statically link DPDK libraries instead of using shared libraries.
+1. (TODO) Rust wrapper (`rust-dpdk`) for low-level DPDK APIs (`rust-dpdk-sys`).
 
-Currently, Rust cargo does not support changing the linker options via build.rs.
-If not set, DPDK's dynamic driver loading will not work so that no PMD will be loaded.
-The build script will generate `export RUSTFLAGS=...` message on its first run.
-Please execute the command to build your DPDK applications.
+## Prerequisites
+
+First, this library depends on Intel Data Plane Development Kit (DPDK).
+Refer to official DPDK document to install DPDK (http://doc.dpdk.org/guides/linux_gsg/index.html).
+
+Here, we include basic instructions to build DPDK and use this library.
+
+Commonly, following packages are required to build DPDK.
+```{.sh}
+apt-get install -y curl git build-essential libnuma-dev # To download and build DPDK
+apt-get install -y linux-headers-amd64 # To build kernel drivers
+apt-get install -y libclang-dev clang llvm-dev # To analyze DPDK headers and create bindings
+```
+
+We recognized existing DPDK installation from `RTE_SDK` and `RTE_TARGET` environment variables.
+If none of them is set, it will download and build DPDK in its temp directory.
+
+If you want to install your own DPDK, download source code from DPDK official website.
+```{.sh}
+wget http://fast.dpdk.org/rel/dpdk-20.02.tar.xz
+tar xf dpdk-20.02.tar.xz
+mv dpdk-20.02 dpdk
+cd dpdk
+export RTE_SDK=`pwd`
+```
+
+If you prepare your own DPDK build, DPDK must be built with `-fPIC` flag.
+```{.sh}
+# in DPDK directory
+EXTRA_CFLAGS=" -fPIC " make config T=x86_64-native-linux-clang
+EXTRA_CFLAGS=" -fPIC " make -j install
+
+# T=x86_64-native-linux-clang becomes RTE_TARGET
+export RTE_TARGET="x86_64-native-linux-clang"
+```
+
+Now add `rust-dpdk` to your project's `Cargo.toml` and use it!
+```{.toml}
+[dependencies]
+rust-dpdk-sys = { git = "https://github.com/ANLAB-KAIST/rust-dpdk.git" }
+```
 
 ## Maintenance
 
@@ -31,4 +74,3 @@ List of failed bindgen builds (last update: 2020-03-18)
 * v0.48
 * v0.51
 * v0.53 (clang-sys mismatch)
-
