@@ -41,7 +41,8 @@ impl EalInner {
     // Create `EalInner`.
     #[inline]
     fn new(args: &mut Vec<String>) -> Result<Self, EalError> {
-        // if we remove `persist_links`, Rust drivers will be unlinked.
+        // To prevent DPDK PMDs' being unlinked, we explicitly create symbolic dependency via
+        // calling `persist_links`.
         dpdk_sys::persist_links();
 
         // 1. DPDK returns number of consumed argc
