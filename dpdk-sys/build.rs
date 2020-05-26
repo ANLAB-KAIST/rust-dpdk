@@ -14,9 +14,9 @@ use std::io::*;
 use std::path::*;
 use std::process::Command;
 
-/// We make static functions to have linkable symbols.
-/// To avoid collision, we add a magic number to all symbols.
-static STATIC_PREFIX: &str = "static_8a9f682d_";
+/// We make additional wrapper functions for existing bindings.
+/// To avoid collision, we add a magic prefix for each.
+static PREFIX: &str = "prefix_8a9f682d_";
 
 /// Some DPDK headers are not intended to be directly included.
 ///
@@ -69,8 +69,17 @@ struct State {
     /// DPDK config file (will be included as a predefined macro file).
     dpdk_config: Option<PathBuf>,
 
-    /// Names of static functions.
+    /// Names of `static inline` functions found in DPDK headers.
     static_functions: Vec<String>,
+
+    /// Names of non-static, PMD-specific functions. We use them to create explicit symbolic
+    /// dependencies to PMDs.
+    ///
+    /// Currently, DPDK's conditional build is incomplete. For example, declaration of
+    /// `rte_pmd_ixgbe_bypass_wd_reset` is controlled by `RTE_LIBRTE_IXGBE_BYPASS`, but its
+    /// definition is not.  Thus, we fallback to use explicit whitelist rather than automatically
+    /// detect non-static symbols.
+    persist_functions: Vec<String>,
 }
 
 impl State {
@@ -89,6 +98,7 @@ impl State {
             dpdk_links: Default::default(),
             dpdk_config: Default::default(),
             static_functions: Default::default(),
+            persist_functions: Default::default(),
         }
     }
 
@@ -241,7 +251,6 @@ impl State {
             }
         }
         if libs.is_empty() {
-            //panic!("Cannot find any shared libraries. Check if DPDK is built with CONFIG_RTE_BUILD_SHARED_LIB=y option.");
             panic!("Cannot find any libraries.");
         }
         libs.sort();
@@ -266,7 +275,6 @@ impl State {
                         continue;
                     }
                 }
-
                 if let Some(ext) = path.extension() {
                     if ext != "h" {
                         continue;
@@ -305,7 +313,6 @@ impl State {
             }
             new_vec.push(file.clone());
         }
-
         new_vec.sort_by(|left, right| {
             let left_str = left.file_stem().unwrap().to_str().unwrap();
             let right_str = right.file_stem().unwrap().to_str().unwrap();
@@ -320,15 +327,14 @@ impl State {
         new_vec.dedup();
         headers = new_vec;
 
+        // Generate all-in-one dpdk header (`dpdk.h`).
         self.dpdk_headers = headers;
         let template_path = self.project_path.join("gen/dpdk.h.template");
         let target_path = self.out_path.join("dpdk.h");
         let mut template = File::open(template_path).unwrap();
         let mut target = File::create(target_path).unwrap();
-
         let mut template_string = String::new();
         template.read_to_string(&mut template_string).ok();
-
         let mut headers_string = String::new();
         for header in &self.dpdk_headers {
             headers_string += &format!(
@@ -337,18 +343,14 @@ impl State {
             );
         }
         let formatted_string = template_string.replace("%header_list%", &headers_string);
-
         target.write_fmt(format_args!("{}", formatted_string)).ok();
     }
 
     /// Generate wrappers for static functions and create persistent link for PMDs.
     fn generate_static_impls_and_link_pmds(&mut self) {
         let clang = clang::Clang::new().unwrap();
-
         let index = clang::Index::new(&clang, true, true);
-
         let header_path = self.out_path.join("dpdk.h");
-
         let mut argument = vec![
             "-march=native".into(),
             format!(
@@ -365,11 +367,9 @@ impl State {
                 .unwrap()
                 .to_string(),
         ];
-
         for path in self.system_include_path.iter() {
             argument.push(format!("-I{}", path).to_string());
         }
-
         let trans_unit = index
             .parser(header_path)
             .arguments(&argument)
@@ -386,10 +386,12 @@ impl State {
             panic!(format!("Encountering {} fatal parse errors", fatal_count));
         }
 
-        let mut persist_link_list = vec![];
+        // List of `static inline` functions (definitions).
         let mut static_def_list = vec![];
+        // List of `static inline` functions (declarations).
         let mut static_impl_list = vec![];
 
+        // Generate C code from given each static function's information.
         fn format_arg(type_: clang::Type, name: String) -> String {
             match type_.get_kind() {
                 clang::TypeKind::DependentSizedArray | clang::TypeKind::VariableArray => {
@@ -412,6 +414,7 @@ impl State {
             }
         }
 
+        // Iterate through the `dpdk.h` header file.
         for f in trans_unit
             .get_entity()
             .get_children()
@@ -425,7 +428,7 @@ impl State {
 
             if storage == clang::StorageClass::None && !is_decl && name.starts_with("rte_pmd_") {
                 // non-static function definition for a PMD is found.
-                persist_link_list.push(name);
+                self.persist_functions.push(name);
             } else if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
                 // Declaration of static function is found (skip if function name starts with _).
                 let mut arg_strings = Vec::new();
@@ -446,7 +449,7 @@ impl State {
                 static_def_list.push(format!(
                     "{ret} {prefix}{name} ({args})",
                     ret = return_type_string,
-                    prefix = STATIC_PREFIX,
+                    prefix = PREFIX,
                     name = name,
                     args = arg_string
                 ));
@@ -473,17 +476,70 @@ impl State {
             .map(|(def_, decl_)| format!("{}{}", def_, decl_))
             .collect::<Vec<_>>()
             .join("\n");
-        let perlist_links = persist_link_list
+
+        // List of manually enabled DPDK PMDs
+        let persist_whitelist: Vec<_> = vec![
+            "rte_pmd_ixgbe_set_all_queues_drop_en", // ixgbe
+            "rte_pmd_i40e_ping_vfs",                // i40e
+            "e1000_igb_init_log",                   // e1000
+            "ice_release_vsi",                      // ice
+            "vmxnet3_dev_tx_queue_release",         // vmxnet3
+            "virtio_dev_pause",                     // virtio
+            "softnic_thread_free",                  // softnic
+            // "ipn3ke_hw_tm_init", // ipn3ke (currently not enabled)
+            // "mlx4_fd_set_non_blocking", // mlx4 (currently not enabled)
+            // "mlx5_set_cksum_table", // mlx5 (currently not enabled)
+            "iavf_prep_pkts",                    // iavf
+            "fm10k_get_pcie_msix_count_generic", // fm10k
+        ]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+
+        // List of non-static PMD-specific functions used to create symbolic dependencies to PMDs.
+        let persist_extern_def_list: Vec<_> = vec![
+            "void e1000_igb_init_log(void)",                           // e1000
+            "int ice_release_vsi(struct ice_vsi *vsi)",                // ice
+            "void vmxnet3_dev_tx_queue_release(void *txq)",            // vmxnet3
+            "int virtio_dev_pause(struct rte_eth_dev *dev)",           // virtio
+            "void softnic_thread_free(struct pmd_internals *softnic)", // softnic
+            // "int ipn3ke_hw_tm_init(struct ipn3ke_hw *hw)", // ipn3ke (currently not enabled)
+            // "int mlx4_fd_set_non_blocking(int fd)", // mlx4 (currently not enabled)
+            // "void mlx5_set_cksum_table(void)", // mlx5 (currently not enabled)
+            "uint16_t iavf_prep_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)", // iavf
+            "uint16_t fm10k_get_pcie_msix_count_generic(struct fm10k_hw *hw)", // fm10k
+        ]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+
+        // Currently, we use whitelist instead of extracted function list from DPDK library.  See
+        // `persist_functions` field of `State` for more information.
+        self.persist_functions = persist_whitelist.clone();
+
+        // Create `extern` definition for each symbol.
+        let persist_extern_defs = persist_extern_def_list
+            .iter()
+            .map(|name| format!("extern {name};", name = name))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Create explicit symbolic links to PMDs from `rust-dpdk-sys` rust library.  We will
+        // normalize each function symbol to return its address.
+        let perlist_links = self
+            .persist_functions
             .iter()
             .map(|name| {
                 format!(
-                    "void* persist_{name}() {{\n\treturn {name};\n}}",
+                    "void* {prefix}{name}() {{\n\treturn {name};\n}}",
+                    prefix = PREFIX,
                     name = name
                 )
             })
             .collect::<Vec<_>>()
             .join("\n");
 
+        // Generate header file from template
         let mut template = File::open(header_template).unwrap();
         let mut template_string = String::new();
         template.read_to_string(&mut template_string).ok();
@@ -491,10 +547,13 @@ impl State {
         let mut target = File::create(header_path).unwrap();
         target.write_fmt(format_args!("{}", &formatted_string)).ok();
 
+        // Generate source file from template
         let mut template = File::open(source_template).unwrap();
         let mut template_string = String::new();
         template.read_to_string(&mut template_string).ok();
         let formatted_string = template_string.replace("%static_impls%", &static_impls);
+        let formatted_string =
+            formatted_string.replace("%persist_extern_defs%", &persist_extern_defs);
         let formatted_string = formatted_string.replace("%persist_pmds%", &perlist_links);
         let mut target = File::create(source_path).unwrap();
         target.write_fmt(format_args!("{}", &formatted_string)).ok();
@@ -550,10 +609,29 @@ impl State {
             .map(|name| {
                 format!(
                     "pub use dpdk::{prefix}{name} as {name};",
-                    prefix = STATIC_PREFIX,
+                    prefix = PREFIX,
                     name = name
                 )
             })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let persist_use_string = self
+            .persist_functions
+            .iter()
+            .map(|name| {
+                format!(
+                    "\tpub fn {prefix}{name}() -> *mut ::std::os::raw::c_void;",
+                    prefix = PREFIX,
+                    name = name
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let persist_invoke_string = self
+            .persist_functions
+            .iter()
+            .map(|name| format!("\t\t\t{prefix}{name}(),", prefix = PREFIX, name = name))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -563,6 +641,9 @@ impl State {
 
         let formatted_string = template_string.replace("%pmd_list%", &pmds_string);
         let formatted_string = formatted_string.replace("%static_use_defs%", &static_use_string);
+        let formatted_string = formatted_string.replace("%persist_use_defs%", &persist_use_string);
+        let formatted_string =
+            formatted_string.replace("%persist_invokes%", &persist_invoke_string);
 
         let mut target = File::create(target_path).unwrap();
         target.write_fmt(format_args!("{}", formatted_string)).ok();
@@ -574,6 +655,21 @@ impl State {
         let dpdk_config = self.dpdk_config.as_ref().unwrap();
         let source_path = self.out_path.join("static.c");
         let lib_path = self.library_path.as_ref().unwrap();
+
+        cc::Build::new()
+            .file(source_path)
+            .static_flag(true)
+            .shared_flag(false)
+            .opt_level(3)
+            .include(dpdk_include_path)
+            .include(&self.out_path)
+            .flag("-w") // hide warnings
+            .flag("-march=native")
+            .flag("-imacros")
+            .flag(dpdk_config.to_str().unwrap())
+            .flag(&format!("-L{}", lib_path.to_str().unwrap()))
+            .flag("-ldpdk")
+            .compile("lib_static_wrapper.a");
 
         println!(
             "cargo:rustc-link-search=native={}",
@@ -594,19 +690,6 @@ impl State {
             }
         }
         println!("cargo:rustc-link-lib=numa");
-
-        cc::Build::new()
-            .file(source_path)
-            .static_flag(true)
-            .shared_flag(false)
-            .opt_level(3)
-            .include(dpdk_include_path)
-            .include(&self.out_path)
-            .flag("-w") // hide warnings
-            .flag("-march=native")
-            .flag("-imacros")
-            .flag(dpdk_config.to_str().unwrap())
-            .compile("lib_static_wrapper.a");
     }
 }
 
