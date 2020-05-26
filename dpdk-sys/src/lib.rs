@@ -1,3 +1,4 @@
+#![warn(rust_2018_idioms)]
 #![warn(missing_docs)]
 
 //! Rust binding for DPDK

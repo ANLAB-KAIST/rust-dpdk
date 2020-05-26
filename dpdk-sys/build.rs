@@ -515,9 +515,7 @@ impl State {
 
         // Currently, we use whitelist instead of extracted function list from DPDK library.  See
         // `persist_functions` field of `State` for more information.
-        self.persist_functions.drain(..);
-        self.persist_functions
-            .append(&mut persist_whitelist.clone());
+        self.persist_functions = persist_whitelist.clone();
 
         // Create `extern` definition for each symbol.
         let persist_extern_defs = persist_extern_def_list
