@@ -50,7 +50,7 @@ impl EalInner {
         if ret < 0 {
             return Err(EalError::ErrorCode { code: ret });
         }
-        
+
         // 2. Strip first n args and return the remaining
         args.drain(..ret as usize);
         Ok(EalInner {
