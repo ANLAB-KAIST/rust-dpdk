@@ -9,7 +9,7 @@ extern "C" {
 pub fn persist_links() -> Vec<*mut ::std::os::raw::c_void> {
     unsafe {
         return vec![
-            %persist_invokes%
+%persist_invokes%
             ];
     }
 }
