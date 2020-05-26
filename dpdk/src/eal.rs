@@ -41,12 +41,16 @@ impl EalInner {
     // Create `EalInner`.
     #[inline]
     fn new(args: &mut Vec<String>) -> Result<Self, EalError> {
+        // if we remove `persist_links`, Rust drivers will be unlinked.
+        dpdk_sys::persist_links();
+
         // 1. DPDK returns number of consumed argc
         // Safety: foriegn function (safe unless there is a bug)
         let ret = unsafe { ffi::run_with_args(dpdk_sys::rte_eal_init, &*args) };
         if ret < 0 {
             return Err(EalError::ErrorCode { code: ret });
         }
+        
         // 2. Strip first n args and return the remaining
         args.drain(..ret as usize);
         Ok(EalInner {

@@ -480,6 +480,70 @@ impl State {
             .map(|(def_, decl_)| format!("{}{}", def_, decl_))
             .collect::<Vec<_>>()
             .join("\n");
+
+        let persist_whitelist: Vec<_> = vec![
+            "rte_pmd_ixgbe_set_all_queues_drop_en", // ixgbe
+            "rte_pmd_i40e_ping_vfs",                // i40e
+            "e1000_igb_init_log",                   // e1000
+            "ice_release_vsi",                      // ice
+            "vmxnet3_dev_tx_queue_release",         // vmxnet3
+            "virtio_dev_pause",                     // virtio
+            "softnic_thread_free",                  // softnic
+            // "ipn3ke_hw_tm_init", // ipn3ke (currently not enabled)
+            // "mlx4_fd_set_non_blocking", // mlx4 (currently not enabled)
+            // "mlx5_set_cksum_table", // mlx5 (currently not enabled)
+            "iavf_prep_pkts",                    // iavf
+            "fm10k_get_pcie_msix_count_generic", // fm10k
+        ]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+
+        let persist_extern_def_list: Vec<_> = vec![
+            "void e1000_igb_init_log(void)",                           // e1000
+            "int ice_release_vsi(struct ice_vsi *vsi)",                // ice
+            "void vmxnet3_dev_tx_queue_release(void *txq)",            // vmxnet3
+            "int virtio_dev_pause(struct rte_eth_dev *dev)",           // virtio
+            "void softnic_thread_free(struct pmd_internals *softnic)", // softnic
+            // "int ipn3ke_hw_tm_init(struct ipn3ke_hw *hw)", // ipn3ke (currently not enabled)
+            // "int mlx4_fd_set_non_blocking(int fd)", // mlx4 (currently not enabled)
+            // "void mlx5_set_cksum_table(void)", // mlx5 (currently not enabled)
+            "uint16_t iavf_prep_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)", // iavf
+            "uint16_t fm10k_get_pcie_msix_count_generic(struct fm10k_hw *hw)", // fm10k
+        ]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+
+        // Currently, DPDK header contains definitions without declarations.  For example,
+        // declaration of `rte_pmd_ixgbe_bypass_wd_reset` is controlled by
+        // `RTE_LIBRTE_IXGBE_BYPASS`, but its header is not.
+        // Thus, we will only use manual whitelist functions.
+        self.persist_functions.drain(..);
+        self.persist_functions
+            .append(&mut persist_whitelist.clone());
+        /*
+        self.persist_functions
+            .append(&mut persist_whitelist.clone());
+        let perlist_links = persist_whitelist
+            .iter()
+            .map(|name| format!("extern void {name}();", name = name))
+            .chain(self.persist_functions.iter().map(|name| {
+                format!(
+                    "void* {prefix}{name}() {{\n\treturn {name};\n}}",
+                    prefix = PERSIST_PREFIX,
+                    name = name
+                )
+            }))
+            .collect::<Vec<_>>()
+            .join("\n");
+        */
+        // Temporal implementation starts
+        let persist_extern_defs = persist_extern_def_list
+            .iter()
+            .map(|name| format!("extern {name};", name = name))
+            .collect::<Vec<_>>()
+            .join("\n");
         let perlist_links = self
             .persist_functions
             .iter()
@@ -492,6 +556,7 @@ impl State {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        // Temporal implementation ends
 
         let mut template = File::open(header_template).unwrap();
         let mut template_string = String::new();
@@ -504,6 +569,8 @@ impl State {
         let mut template_string = String::new();
         template.read_to_string(&mut template_string).ok();
         let formatted_string = template_string.replace("%static_impls%", &static_impls);
+        let formatted_string =
+            formatted_string.replace("%persist_extern_defs%", &persist_extern_defs);
         let formatted_string = formatted_string.replace("%persist_pmds%", &perlist_links);
         let mut target = File::create(source_path).unwrap();
         target.write_fmt(format_args!("{}", &formatted_string)).ok();
@@ -578,6 +645,18 @@ impl State {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        let persist_invoke_string = self
+            .persist_functions
+            .iter()
+            .map(|name| {
+                format!(
+                    "\t\t\t{prefix}{name}(),",
+                    prefix = PERSIST_PREFIX,
+                    name = name
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let mut template = File::open(template_path).unwrap();
         let mut template_string = String::new();
@@ -586,6 +665,8 @@ impl State {
         let formatted_string = template_string.replace("%pmd_list%", &pmds_string);
         let formatted_string = formatted_string.replace("%static_use_defs%", &static_use_string);
         let formatted_string = formatted_string.replace("%persist_use_defs%", &persist_use_string);
+        let formatted_string =
+            formatted_string.replace("%persist_invokes%", &persist_invoke_string);
 
         let mut target = File::create(target_path).unwrap();
         target.write_fmt(format_args!("{}", formatted_string)).ok();
@@ -597,6 +678,21 @@ impl State {
         let dpdk_config = self.dpdk_config.as_ref().unwrap();
         let source_path = self.out_path.join("static.c");
         let lib_path = self.library_path.as_ref().unwrap();
+
+        cc::Build::new()
+            .file(source_path)
+            .static_flag(true)
+            .shared_flag(false)
+            .opt_level(3)
+            .include(dpdk_include_path)
+            .include(&self.out_path)
+            .flag("-w") // hide warnings
+            .flag("-march=native")
+            .flag("-imacros")
+            .flag(dpdk_config.to_str().unwrap())
+            .flag(&format!("-L{}", lib_path.to_str().unwrap()))
+            .flag("-ldpdk")
+            .compile("lib_static_wrapper.a");
 
         println!(
             "cargo:rustc-link-search=native={}",
@@ -617,19 +713,6 @@ impl State {
             }
         }
         println!("cargo:rustc-link-lib=numa");
-
-        cc::Build::new()
-            .file(source_path)
-            .static_flag(true)
-            .shared_flag(false)
-            .opt_level(3)
-            .include(dpdk_include_path)
-            .include(&self.out_path)
-            .flag("-w") // hide warnings
-            .flag("-march=native")
-            .flag("-imacros")
-            .flag(dpdk_config.to_str().unwrap())
-            .compile("lib_static_wrapper.a");
     }
 }
 

@@ -2,22 +2,6 @@
 
 %static_impls%
 
+%persist_extern_defs%
+
 %persist_pmds%
-
-// Force link e1000 driver
-extern void e1000_igb_init_log(void);
-void* persist_e1000_igb_init_log() {
-    return e1000_igb_init_log;
-}
-
-// Force link mlx4 driver
-extern int mlx4_fd_set_non_blocking(int fd);
-void* persist_mlx4_fd_set_non_blocking() {
-    return mlx4_fd_set_non_blocking;
-}
-
-// Force link mlx5 driver
-extern void mlx5_set_cksum_table(void);
-void* persist_mlx5_set_cksum_table() {
-    return mlx5_set_cksum_table;
-}

@@ -1,3 +1,5 @@
+extern crate dpdk_sys;
+
 use std::env;
 use std::ffi;
 use std::os::raw::*;
