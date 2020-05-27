@@ -18,9 +18,9 @@ This library is built for following design goals.
 
 | Library   | No bindgen output | Static linking  | Inline function wrappers | Prevent PMD opt-out | Rust-stype wrappers |
 | --------- | ----------------- | --------------- | ------------------------ | ------------------- | ------------------- | 
-| flier     | X                 | O               | O (manual)               | X                   | O                   |
-| netbricks | O (manual FFI)    | X               | X                        | O (via dynload)     | X                   |
-| ANLAB     | O                 | O               | O (automatic)            | O                   | (under construction)|
+| flier     | bindgen snapshot  | O               | O (manual)               | X                   | O                   |
+| netbricks | manual FFI        | X               | X                        | O (via dynload)     | X                   |
+| ANLAB     | ondemand creation | O               | O (automatic)            | O                   | (under construction)|
 
 ## Prerequisites
 
