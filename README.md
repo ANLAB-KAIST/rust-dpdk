@@ -16,6 +16,12 @@ This library is built for following design goals.
 1. Statically link DPDK libraries instead of using shared libraries.
 1. (TODO) Rust wrapper (`rust-dpdk`) for low-level DPDK APIs (`rust-dpdk-sys`).
 
+| Library   | No bindgen output | Static linking  | Inline function wrappers | Prevent PMD opt-out | Rust-style wrappers |
+| --------- | ----------------- | --------------- | ------------------------ | ------------------- | ------------------- | 
+| flier     | bindgen snapshot  | O               | O (manual)               | X                   | O                   |
+| netbricks | manual FFI        | X               | X                        | O (via dynload)     | X                   |
+| ANLAB     | ondemand creation | O               | O (automatic)            | O                   | (under construction)|
+
 ## Prerequisites
 
 First, this library depends on Intel Data Plane Development Kit (DPDK).
