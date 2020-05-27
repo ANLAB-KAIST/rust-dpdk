@@ -2,15 +2,16 @@
 %static_use_defs%
 
 extern "C" {
-%persist_use_defs%
+%explicit_use_defs%
 }
 
 /// Return persist links
-pub fn persist_links() -> Vec<*mut ::std::os::raw::c_void> {
+pub fn load_drivers() {
+    // # Safety
+    // Following function calls return function pointers.
+    // In most cases, they have no effect.
     unsafe {
-        return vec![
-%persist_invokes%
-            ];
+%explicit_invokes%
     }
 }
 

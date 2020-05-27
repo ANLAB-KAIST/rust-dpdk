@@ -72,14 +72,14 @@ struct State {
     /// Names of `static inline` functions found in DPDK headers.
     static_functions: Vec<String>,
 
-    /// Names of non-static, PMD-specific functions. We use them to create explicit symbolic
-    /// dependencies to PMDs.
+    /// Names of linkable (non-static) PMD-specific functions. We use them to create explicit
+    /// symbolic dependencies to PMDs.
     ///
     /// Currently, DPDK's conditional build is incomplete. For example, declaration of
     /// `rte_pmd_ixgbe_bypass_wd_reset` is controlled by `RTE_LIBRTE_IXGBE_BYPASS`, but its
     /// definition is not.  Thus, we fallback to use explicit whitelist rather than automatically
     /// detect non-static symbols.
-    persist_functions: Vec<String>,
+    linkable_pmd_functions: Vec<String>,
 }
 
 impl State {
@@ -98,7 +98,7 @@ impl State {
             dpdk_links: Default::default(),
             dpdk_config: Default::default(),
             static_functions: Default::default(),
-            persist_functions: Default::default(),
+            linkable_pmd_functions: Default::default(),
         }
     }
 
@@ -346,7 +346,7 @@ impl State {
         target.write_fmt(format_args!("{}", formatted_string)).ok();
     }
 
-    /// Generate wrappers for static functions and create persistent link for PMDs.
+    /// Generate wrappers for static functions and create explicit links for PMDs.
     fn generate_static_impls_and_link_pmds(&mut self) {
         let clang = clang::Clang::new().unwrap();
         let index = clang::Index::new(&clang, true, true);
@@ -428,7 +428,7 @@ impl State {
 
             if storage == clang::StorageClass::None && !is_decl && name.starts_with("rte_pmd_") {
                 // non-static function definition for a PMD is found.
-                self.persist_functions.push(name);
+                self.linkable_pmd_functions.push(name);
             } else if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
                 // Declaration of static function is found (skip if function name starts with _).
                 let mut arg_strings = Vec::new();
@@ -478,7 +478,7 @@ impl State {
             .join("\n");
 
         // List of manually enabled DPDK PMDs
-        let persist_whitelist: Vec<_> = vec![
+        let linkable_whitelist: Vec<_> = vec![
             "rte_pmd_ixgbe_set_all_queues_drop_en", // ixgbe
             "rte_pmd_i40e_ping_vfs",                // i40e
             "e1000_igb_init_log",                   // e1000
@@ -497,7 +497,7 @@ impl State {
         .collect();
 
         // List of non-static PMD-specific functions used to create symbolic dependencies to PMDs.
-        let persist_extern_def_list: Vec<_> = vec![
+        let linkable_extern_def_list: Vec<_> = vec![
             "void e1000_igb_init_log(void)",                           // e1000
             "int ice_release_vsi(struct ice_vsi *vsi)",                // ice
             "void vmxnet3_dev_tx_queue_release(void *txq)",            // vmxnet3
@@ -514,11 +514,11 @@ impl State {
         .collect();
 
         // Currently, we use whitelist instead of extracted function list from DPDK library.  See
-        // `persist_functions` field of `State` for more information.
-        self.persist_functions = persist_whitelist.clone();
+        // `linkable_pmd_functions` field of `State` for more information.
+        self.linkable_pmd_functions = linkable_whitelist.clone();
 
         // Create `extern` definition for each symbol.
-        let persist_extern_defs = persist_extern_def_list
+        let linkable_extern_defs = linkable_extern_def_list
             .iter()
             .map(|name| format!("extern {name};", name = name))
             .collect::<Vec<_>>()
@@ -527,7 +527,7 @@ impl State {
         // Create explicit symbolic links to PMDs from `rust-dpdk-sys` rust library.  We will
         // normalize each function symbol to return its address.
         let perlist_links = self
-            .persist_functions
+            .linkable_pmd_functions
             .iter()
             .map(|name| {
                 format!(
@@ -553,8 +553,8 @@ impl State {
         template.read_to_string(&mut template_string).ok();
         let formatted_string = template_string.replace("%static_impls%", &static_impls);
         let formatted_string =
-            formatted_string.replace("%persist_extern_defs%", &persist_extern_defs);
-        let formatted_string = formatted_string.replace("%persist_pmds%", &perlist_links);
+            formatted_string.replace("%linkable_extern_defs%", &linkable_extern_defs);
+        let formatted_string = formatted_string.replace("%explicit_pmd_links%", &perlist_links);
         let mut target = File::create(source_path).unwrap();
         target.write_fmt(format_args!("{}", &formatted_string)).ok();
     }
@@ -616,8 +616,8 @@ impl State {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let persist_use_string = self
-            .persist_functions
+        let explicit_use_string = self
+            .linkable_pmd_functions
             .iter()
             .map(|name| {
                 format!(
@@ -628,10 +628,10 @@ impl State {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let persist_invoke_string = self
-            .persist_functions
+        let explicit_invoke_string = self
+            .linkable_pmd_functions
             .iter()
-            .map(|name| format!("\t\t\t{prefix}{name}(),", prefix = PREFIX, name = name))
+            .map(|name| format!("\t\t{prefix}{name}();", prefix = PREFIX, name = name))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -641,9 +641,10 @@ impl State {
 
         let formatted_string = template_string.replace("%pmd_list%", &pmds_string);
         let formatted_string = formatted_string.replace("%static_use_defs%", &static_use_string);
-        let formatted_string = formatted_string.replace("%persist_use_defs%", &persist_use_string);
         let formatted_string =
-            formatted_string.replace("%persist_invokes%", &persist_invoke_string);
+            formatted_string.replace("%explicit_use_defs%", &explicit_use_string);
+        let formatted_string =
+            formatted_string.replace("%explicit_invokes%", &explicit_invoke_string);
 
         let mut target = File::create(target_path).unwrap();
         target.write_fmt(format_args!("{}", formatted_string)).ok();

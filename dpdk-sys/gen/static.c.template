@@ -2,6 +2,6 @@
 
 %static_impls%
 
-%persist_extern_defs%
+%linkable_extern_defs%
 
-%persist_pmds%
+%explicit_pmd_links%
