@@ -70,6 +70,9 @@ struct State {
     /// DPDK config file (will be included as a predefined macro file).
     dpdk_config: Option<PathBuf>,
 
+    /// Use definitions for automatically found EAL APIs.
+    eal_function_use_defs: Vec<String>,
+
     /// Names of `static inline` functions found in DPDK headers.
     static_functions: Vec<String>,
 
@@ -98,6 +101,7 @@ impl State {
             dpdk_headers: Default::default(),
             dpdk_links: Default::default(),
             dpdk_config: Default::default(),
+            eal_function_use_defs: Default::default(),
             static_functions: Default::default(),
             linkable_pmd_functions: Default::default(),
         }
@@ -389,13 +393,7 @@ impl State {
 
     /// Generate wrappers for static functions and create explicit links for PMDs.
     fn extract_eal_apis(&mut self) {
-        // TODO
-        let header_path = self.include_path.as_ref().unwrap().join("rte_eal.h");
-        let clang = clang::Clang::new().unwrap();
-        let index = clang::Index::new(&clang, true, true);
-        let trans_unit = self.trans_unit_from_header(&index, header_path);
-
-        let arg_type_whitelist: HashMap<_, _> = [
+        let arg_type_whitelist: HashMap<_, _> = vec![
             ("void", "()"),
             ("int", "isize"),
             ("unsigned int", "usize"),
@@ -407,54 +405,119 @@ impl State {
             ("int16_t", "i16"),
             ("int32_t", "i32"),
             ("int64_t", "i64"),
-        ]
-        .iter().map(|(c_type, rust_type)| {(String::from(*c_type),String::from(*rust_type))} ).collect();
+        ].iter().map(|(c_type, rust_type)| {(String::from(*c_type), String::from(*rust_type))}).collect();
+        let headers_whitelist = vec![
+            "rte_atomic.h",
+            "rte_byteorder.h",
+            "rte_cpuflags.h",
+            "rte_cycles.h",
+            "rte_io.h",
+            "rte_mcslock.h",
+            "rte_memcpy.h",
+            "rte_pause.h",
+            "rte_prefetch.h",
+            "rte_rwlock.h",
+            "rte_spinlock.h",
+            "rte_ticketlock.h",
+            "rte_vect.h",
+            "rte_alarm.h",
+            "rte_bitmap.h",
+            "rte_branch_prediction.h",
+            "rte_bus.h",
+            "rte_class.h",
+            "rte_common.h",
+            "rte_compat.h",
+            "rte_debug.h",
+            "rte_dev.h",
+            "rte_devargs.h",
+            "rte_eal_interrupts.h",
+            "rte_eal_memconfig.h",
+            "rte_eal.h",
+            "rte_errno.h",
+            "rte_fbarray.h",
+            "rte_function_versioning.h",
+            "rte_hexdump.h",
+            "rte_hypervisor.h",
+            "rte_interrupts.h",
+            "rte_keepalive.h",
+            "rte_launch.h",
+            "rte_lcore.h",
+            "rte_log.h",
+            "rte_malloc.h",
+            "rte_memory.h",
+            "rte_memzone.h",
+            "rte_option.h",
+            "rte_pci_dev_feature_defs.h",
+            "rte_pci_dev_features.h",
+            "rte_per_lcore.h",
+            "rte_random.h",
+            "rte_reciprocal.h",
+            "rte_service_component.h",
+            "rte_service.h",
+            "rte_string_fns.h",
+            "rte_tailq.h",
+            "rte_test.h",
+            "rte_time.h",
+            "rte_uuid.h",
+            "rte_version.h",
+            "rte_vfio.h"
+        ];
 
-        // Iterate through the `dpdk.h` header file.
-        for f in trans_unit
-            .get_entity()
-            .get_children()
-            .into_iter()
-            .filter(|e| e.get_kind() == clang::EntityKind::FunctionDecl)
-        {
-            let name = some_or!(f.get_name(), continue);
-            let storage = some_or!(f.get_storage_class(), continue);
-            let return_type = some_or!(f.get_result_type(), continue);
-            let is_decl = f.is_definition();
-            if storage == clang::StorageClass::None && !is_decl && !name.starts_with('_') {
-
-            }
-            else if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
-
-            } else {
+        for header_name in &headers_whitelist {
+            let header_path = self.include_path.as_ref().unwrap().join(header_name);
+            if !header_path.exists() {
                 continue;
             }
-            
-            //println!("cargo:warning={:?}", f.get_comment());
-            
-            if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
-                // Declaration of static function is found (skip if function name starts with _).
-                let c_return_type_string = return_type.get_display_name();
-                let rust_return_type_string = some_or!(arg_type_whitelist.get(&c_return_type_string), {
+            let clang = clang::Clang::new().unwrap();
+            let index = clang::Index::new(&clang, true, true);
+            let trans_unit = self.trans_unit_from_header(&index, header_path);
+
+            // Iterate through the `dpdk.h` header file.
+            for f in trans_unit
+                .get_entity()
+                .get_children()
+                .into_iter()
+                .filter(|e| e.get_kind() == clang::EntityKind::FunctionDecl)
+            {
+                let name = some_or!(f.get_name(), continue);
+                let storage = some_or!(f.get_storage_class(), continue);
+                let return_type = some_or!(f.get_result_type(), continue);
+                let is_decl = f.is_definition();
+                if storage == clang::StorageClass::None && !is_decl && !name.starts_with('_') {
+
+                }
+                else if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
+
+                } else {
                     continue;
-                });
-                let args = f.get_arguments().unwrap_or(Vec::new());
-                let mut has_unsupported_arg = false;
-                for (counter, arg) in args.iter().enumerate() {
-                    let arg_name = arg
-                        .get_display_name()
-                        .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
-                    let c_type_name = arg.get_type().unwrap().get_display_name();
-                    let rust_type_name = some_or!(arg_type_whitelist.get(&c_type_name), {
-                        has_unsupported_arg = true;
-                        break;
+                }
+                
+                //println!("cargo:warning={:?}", f.get_comment());
+                
+                if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
+                    // Declaration of static function is found (skip if function name starts with _).
+                    let c_return_type_string = return_type.get_display_name();
+                    let rust_return_type_string = some_or!(arg_type_whitelist.get(&c_return_type_string), {
+                        continue;
                     });
-                    // println!("cargo:warning={} {} {}", rust_return_type_string, rust_type_name, arg_name);
+                    let args = f.get_arguments().unwrap_or(Vec::new());
+                    let mut has_unsupported_arg = false;
+                    for (counter, arg) in args.iter().enumerate() {
+                        let arg_name = arg
+                            .get_display_name()
+                            .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
+                        let c_type_name = arg.get_type().unwrap().get_display_name();
+                        let rust_type_name = some_or!(arg_type_whitelist.get(&c_type_name), {
+                            has_unsupported_arg = true;
+                            break;
+                        });
+                        // println!("cargo:warning={} {} {}", rust_return_type_string, rust_type_name, arg_name);
+                    }
+                    if has_unsupported_arg {
+                        continue;
+                    }
+                    println!("cargo:warning={} {}", rust_return_type_string, name);
                 }
-                if has_unsupported_arg {
-                    continue;
-                }
-                println!("cargo:warning={} {}", rust_return_type_string, name);
             }
         }
     }
