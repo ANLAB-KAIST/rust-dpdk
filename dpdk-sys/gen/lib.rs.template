@@ -15,6 +15,14 @@ pub fn load_drivers() {
     }
 }
 
+/// Auto-generated Static EAL functions
+/// 
+/// # Safety
+/// This implementation must be used after `rte_eal_init` and never used after `rte_eal_cleanup`.
+unsafe impl StaticEalFunctions {
+%static_eal_functions%
+}
+
 /// Get all PMD(poll-mode driver)'s name.
 #[inline]
 pub fn pmd_list() -> Vec<String> {

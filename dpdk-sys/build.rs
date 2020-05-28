@@ -13,6 +13,7 @@ use std::fs::*;
 use std::io::*;
 use std::path::*;
 use std::process::Command;
+use std::collections::HashMap;
 
 /// We make additional wrapper functions for existing bindings.
 /// To avoid collision, we add a magic prefix for each.
@@ -100,6 +101,46 @@ impl State {
             static_functions: Default::default(),
             linkable_pmd_functions: Default::default(),
         }
+    }
+
+    /// Create clang trans unit from given header file.
+    /// This function will fill options from current `State`.
+    fn trans_unit_from_header<'a>(&self, index: &'a clang::Index, header_path: PathBuf) -> clang::TranslationUnit<'a> {
+        let mut argument = vec![
+            "-march=native".into(),
+            format!(
+                "-I{}",
+                self.include_path.as_ref().unwrap().to_str().unwrap()
+            ),
+            //.to_string(),
+            format!("-I{}", self.out_path.to_str().unwrap()), //.to_string(),
+            "-imacros".into(),
+            self.dpdk_config
+                .as_ref()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string(),
+        ];
+        for path in self.system_include_path.iter() {
+            argument.push(format!("-I{}", path).to_string());
+        }
+        let trans_unit = index
+            .parser(header_path)
+            .arguments(&argument)
+            .parse()
+            .unwrap();
+        let diagnostics = trans_unit.get_diagnostics();
+        let mut fatal_count = 0;
+        for diagnostic in diagnostics {
+            if let clang::diagnostic::Severity::Fatal = diagnostic.get_severity() {
+                fatal_count += 1;
+            }
+        }
+        if fatal_count > 0 {
+            panic!(format!("Encountering {} fatal parse errors", fatal_count));
+        }
+        trans_unit
     }
 
     /// Check current OS.
@@ -347,44 +388,83 @@ impl State {
     }
 
     /// Generate wrappers for static functions and create explicit links for PMDs.
-    fn generate_static_impls_and_link_pmds(&mut self) {
+    fn extract_eal_apis(&mut self) {
+        // TODO
+        let header_path = self.include_path.as_ref().unwrap().join("rte_eal.h");
         let clang = clang::Clang::new().unwrap();
         let index = clang::Index::new(&clang, true, true);
-        let header_path = self.out_path.join("dpdk.h");
-        let mut argument = vec![
-            "-march=native".into(),
-            format!(
-                "-I{}",
-                self.include_path.as_ref().unwrap().to_str().unwrap()
-            ),
-            //.to_string(),
-            format!("-I{}", self.out_path.to_str().unwrap()), //.to_string(),
-            "-imacros".into(),
-            self.dpdk_config
-                .as_ref()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string(),
-        ];
-        for path in self.system_include_path.iter() {
-            argument.push(format!("-I{}", path).to_string());
-        }
-        let trans_unit = index
-            .parser(header_path)
-            .arguments(&argument)
-            .parse()
-            .unwrap();
-        let diagnostics = trans_unit.get_diagnostics();
-        let mut fatal_count = 0;
-        for diagnostic in diagnostics {
-            if let clang::diagnostic::Severity::Fatal = diagnostic.get_severity() {
-                fatal_count += 1;
+        let trans_unit = self.trans_unit_from_header(&index, header_path);
+
+        let arg_type_whitelist: HashMap<_, _> = [
+            ("void", "()"),
+            ("int", "isize"),
+            ("unsigned int", "usize"),
+            ("uint8_t", "u8"),
+            ("uint16_t", "u16"),
+            ("uint32_t", "u32"),
+            ("uint64_t", "u64"),
+            ("int8_t", "i8"),
+            ("int16_t", "i16"),
+            ("int32_t", "i32"),
+            ("int64_t", "i64"),
+        ]
+        .iter().map(|(c_type, rust_type)| {(String::from(*c_type),String::from(*rust_type))} ).collect();
+
+        // Iterate through the `dpdk.h` header file.
+        for f in trans_unit
+            .get_entity()
+            .get_children()
+            .into_iter()
+            .filter(|e| e.get_kind() == clang::EntityKind::FunctionDecl)
+        {
+            let name = some_or!(f.get_name(), continue);
+            let storage = some_or!(f.get_storage_class(), continue);
+            let return_type = some_or!(f.get_result_type(), continue);
+            let is_decl = f.is_definition();
+            if storage == clang::StorageClass::None && !is_decl && !name.starts_with('_') {
+
+            }
+            else if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
+
+            } else {
+                continue;
+            }
+            
+            //println!("cargo:warning={:?}", f.get_comment());
+            
+            if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
+                // Declaration of static function is found (skip if function name starts with _).
+                let c_return_type_string = return_type.get_display_name();
+                let rust_return_type_string = some_or!(arg_type_whitelist.get(&c_return_type_string), {
+                    continue;
+                });
+                let args = f.get_arguments().unwrap_or(Vec::new());
+                let mut has_unsupported_arg = false;
+                for (counter, arg) in args.iter().enumerate() {
+                    let arg_name = arg
+                        .get_display_name()
+                        .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
+                    let c_type_name = arg.get_type().unwrap().get_display_name();
+                    let rust_type_name = some_or!(arg_type_whitelist.get(&c_type_name), {
+                        has_unsupported_arg = true;
+                        break;
+                    });
+                    // println!("cargo:warning={} {} {}", rust_return_type_string, rust_type_name, arg_name);
+                }
+                if has_unsupported_arg {
+                    continue;
+                }
+                println!("cargo:warning={} {}", rust_return_type_string, name);
             }
         }
-        if fatal_count > 0 {
-            panic!(format!("Encountering {} fatal parse errors", fatal_count));
-        }
+    }
+
+    /// Generate wrappers for static functions and create explicit links for PMDs.
+    fn generate_static_impls_and_link_pmds(&mut self) {
+        let header_path = self.out_path.join("dpdk.h");
+        let clang = clang::Clang::new().unwrap();
+        let index = clang::Index::new(&clang, true, true);
+        let trans_unit = self.trans_unit_from_header(&index, header_path);
 
         // List of `static inline` functions (definitions).
         let mut static_def_list = vec![];
@@ -701,6 +781,7 @@ fn main() {
     state.find_dpdk();
     state.find_link_libs();
     state.make_all_in_one_header();
+    state.extract_eal_apis();
     state.generate_static_impls_and_link_pmds();
     state.generate_rust_def();
     state.generate_lib_rs();
