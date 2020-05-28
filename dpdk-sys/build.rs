@@ -8,12 +8,12 @@ extern crate regex;
 use etrace::some_or;
 use regex::Regex;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::env;
 use std::fs::*;
 use std::io::*;
 use std::path::*;
 use std::process::Command;
-use std::collections::HashMap;
 
 /// We make additional wrapper functions for existing bindings.
 /// To avoid collision, we add a magic prefix for each.
@@ -109,7 +109,11 @@ impl State {
 
     /// Create clang trans unit from given header file.
     /// This function will fill options from current `State`.
-    fn trans_unit_from_header<'a>(&self, index: &'a clang::Index, header_path: PathBuf) -> clang::TranslationUnit<'a> {
+    fn trans_unit_from_header<'a>(
+        &self,
+        index: &'a clang::Index,
+        header_path: PathBuf,
+    ) -> clang::TranslationUnit<'a> {
         let mut argument = vec![
             "-march=native".into(),
             format!(
@@ -395,8 +399,10 @@ impl State {
     fn extract_eal_apis(&mut self) {
         let arg_type_whitelist: HashMap<_, _> = vec![
             ("void", "()"),
-            ("int", "isize"),
-            ("unsigned int", "usize"),
+            ("int", "i32"),
+            ("unsigned int", "u32"),
+            ("size_t", "usize"),
+            ("ssize_t", "isize"),
             ("uint8_t", "u8"),
             ("uint16_t", "u16"),
             ("uint32_t", "u32"),
@@ -405,8 +411,12 @@ impl State {
             ("int16_t", "i16"),
             ("int32_t", "i32"),
             ("int64_t", "i64"),
-        ].iter().map(|(c_type, rust_type)| {(String::from(*c_type), String::from(*rust_type))}).collect();
+        ]
+        .iter()
+        .map(|(c_type, rust_type)| (String::from(*c_type), String::from(*rust_type)))
+        .collect();
         let headers_whitelist = vec![
+            // From librte_eal/include/generic
             "rte_atomic.h",
             "rte_byteorder.h",
             "rte_cpuflags.h",
@@ -420,6 +430,7 @@ impl State {
             "rte_spinlock.h",
             "rte_ticketlock.h",
             "rte_vect.h",
+            // From librte_eal/include
             "rte_alarm.h",
             "rte_bitmap.h",
             "rte_branch_prediction.h",
@@ -460,8 +471,9 @@ impl State {
             "rte_time.h",
             "rte_uuid.h",
             "rte_version.h",
-            "rte_vfio.h"
+            "rte_vfio.h",
         ];
+        let mut use_def_map = HashMap::new();
 
         for header_name in &headers_whitelist {
             let header_path = self.include_path.as_ref().unwrap().join(header_name);
@@ -472,7 +484,7 @@ impl State {
             let index = clang::Index::new(&clang, true, true);
             let trans_unit = self.trans_unit_from_header(&index, header_path);
 
-            // Iterate through the `dpdk.h` header file.
+            // Iterate through each EAL header files.
             for f in trans_unit
                 .get_entity()
                 .get_children()
@@ -483,25 +495,30 @@ impl State {
                 let storage = some_or!(f.get_storage_class(), continue);
                 let return_type = some_or!(f.get_result_type(), continue);
                 let is_decl = f.is_definition();
-                if storage == clang::StorageClass::None && !is_decl && !name.starts_with('_') {
-
+                let comment = some_or!(f.get_comment(), continue);
+                if use_def_map.contains_key(&name) {
+                    continue;
                 }
-                else if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
-
+                if storage == clang::StorageClass::None && !is_decl && !name.starts_with('_') {
+                } else if storage == clang::StorageClass::Static
+                    && is_decl
+                    && !name.starts_with('_')
+                {
                 } else {
                     continue;
                 }
-                
-                //println!("cargo:warning={:?}", f.get_comment());
-                
+
                 if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
                     // Declaration of static function is found (skip if function name starts with _).
                     let c_return_type_string = return_type.get_display_name();
-                    let rust_return_type_string = some_or!(arg_type_whitelist.get(&c_return_type_string), {
-                        continue;
-                    });
+                    let rust_return_type_string =
+                        some_or!(arg_type_whitelist.get(&c_return_type_string), {
+                            continue;
+                        });
                     let args = f.get_arguments().unwrap_or(Vec::new());
                     let mut has_unsupported_arg = false;
+                    let mut arg_names = Vec::new();
+                    let mut rust_arg_names = Vec::new();
                     for (counter, arg) in args.iter().enumerate() {
                         let arg_name = arg
                             .get_display_name()
@@ -511,15 +528,17 @@ impl State {
                             has_unsupported_arg = true;
                             break;
                         });
-                        // println!("cargo:warning={} {} {}", rust_return_type_string, rust_type_name, arg_name);
+                        rust_arg_names.push(format!("{}: {}", arg_name, rust_type_name));
+                        arg_names.push(String::from(arg_name));
                     }
                     if has_unsupported_arg {
                         continue;
                     }
-                    println!("cargo:warning={} {}", rust_return_type_string, name);
+                    use_def_map.insert(name.clone(), format!("\n{comment}\n#[inline(always)]\nfn {name} ( &self, {rust_args} ) -> {ret} {{\n\tunsafe {{ crate::{name}({c_arg}) }}\n}}", comment=comment, name=name, rust_args=rust_arg_names.join(", "), ret=rust_return_type_string, c_arg=arg_names.iter().map(|arg| format!("{}", arg)).collect::<Vec<_>>().join(", ")));
                 }
             }
         }
+        self.eal_function_use_defs = use_def_map.values().cloned().collect();
     }
 
     /// Generate wrappers for static functions and create explicit links for PMDs.
@@ -788,6 +807,15 @@ impl State {
             formatted_string.replace("%explicit_use_defs%", &explicit_use_string);
         let formatted_string =
             formatted_string.replace("%explicit_invokes%", &explicit_invoke_string);
+        let formatted_string = formatted_string.replace(
+            "%static_eal_functions%",
+            &self
+                .eal_function_use_defs
+                .iter()
+                .map(|item| item.replace("\n", "\n\t"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
 
         let mut target = File::create(target_path).unwrap();
         target.write_fmt(format_args!("{}", formatted_string)).ok();
