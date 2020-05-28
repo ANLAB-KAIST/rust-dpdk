@@ -19,6 +19,6 @@ pub fn load_drivers() {
 /// 
 /// # Safety
 /// This implementation must be used after `rte_eal_init` and never used after `rte_eal_cleanup`.
-unsafe trait StaticEalFunctions {
+pub unsafe trait StaticEalFunctions {
 %static_eal_functions%
 }

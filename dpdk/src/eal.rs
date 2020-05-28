@@ -37,6 +37,8 @@ impl Eal {
     }
 }
 
+unsafe impl dpdk_sys::StaticEalFunctions for Eal {}
+
 impl EalInner {
     // Create `EalInner`.
     #[inline]
