@@ -22,17 +22,3 @@ pub fn load_drivers() {
 unsafe trait StaticEalFunctions {
 %static_eal_functions%
 }
-
-/// Get all PMD(poll-mode driver)'s name.
-#[inline]
-pub fn pmd_list() -> Vec<String> {
-let str_vec = vec![%pmd_list%
-];
-let mut string_vec = vec![];
-for x in str_vec {
-let mut s = String::new();
-s.push_str(x);
-string_vec.push(s);
-}
-string_vec
-}

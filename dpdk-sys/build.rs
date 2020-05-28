@@ -750,21 +750,6 @@ impl State {
         let template_path = self.project_path.join("gen/lib.rs.template");
         let target_path = self.out_path.join("lib.rs");
 
-        let format = Regex::new(r"rte_pmd_(\w+)").unwrap();
-
-        let pmds: Vec<_> = self
-            .dpdk_links
-            .iter()
-            .filter_map(|link| {
-                let link_name = link.file_stem().unwrap().to_str().unwrap();
-                format
-                    .captures(link_name)
-                    .map(|capture| format!("\"{}\"", &capture[1]))
-            })
-            .collect();
-
-        let pmds_string = pmds.join(",\n");
-
         let static_use_string = self
             .static_functions
             .iter()
@@ -801,8 +786,7 @@ impl State {
         let mut template_string = String::new();
         template.read_to_string(&mut template_string).ok();
 
-        let formatted_string = template_string.replace("%pmd_list%", &pmds_string);
-        let formatted_string = formatted_string.replace("%static_use_defs%", &static_use_string);
+        let formatted_string = template_string.replace("%static_use_defs%", &static_use_string);
         let formatted_string =
             formatted_string.replace("%explicit_use_defs%", &explicit_use_string);
         let formatted_string =
