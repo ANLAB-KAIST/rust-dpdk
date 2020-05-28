@@ -395,7 +395,7 @@ impl State {
         target.write_fmt(format_args!("{}", formatted_string)).ok();
     }
 
-    /// Generate wrappers for static functions and create explicit links for PMDs.
+    /// Extract trivial EAL APIs whose paramter types are all primitive (e.g. `uint8_t`).
     fn extract_eal_apis(&mut self) {
         let arg_type_whitelist: HashMap<_, _> = vec![
             ("void", "()"),
@@ -431,47 +431,47 @@ impl State {
             "rte_ticketlock.h",
             "rte_vect.h",
             // From librte_eal/include
-            "rte_alarm.h",
-            "rte_bitmap.h",
-            "rte_branch_prediction.h",
-            "rte_bus.h",
-            "rte_class.h",
+            // "rte_alarm.h",
+            // "rte_bitmap.h",
+            // "rte_branch_prediction.h",
+            // "rte_bus.h",
+            // "rte_class.h",
             "rte_common.h",
-            "rte_compat.h",
-            "rte_debug.h",
-            "rte_dev.h",
-            "rte_devargs.h",
-            "rte_eal_interrupts.h",
-            "rte_eal_memconfig.h",
-            "rte_eal.h",
-            "rte_errno.h",
-            "rte_fbarray.h",
-            "rte_function_versioning.h",
-            "rte_hexdump.h",
-            "rte_hypervisor.h",
-            "rte_interrupts.h",
-            "rte_keepalive.h",
-            "rte_launch.h",
-            "rte_lcore.h",
-            "rte_log.h",
-            "rte_malloc.h",
-            "rte_memory.h",
-            "rte_memzone.h",
-            "rte_option.h",
-            "rte_pci_dev_feature_defs.h",
-            "rte_pci_dev_features.h",
-            "rte_per_lcore.h",
+            // "rte_compat.h",
+            // "rte_debug.h",
+            // "rte_dev.h",
+            // "rte_devargs.h",
+            // "rte_eal_interrupts.h",
+            // "rte_eal_memconfig.h",
+            // "rte_eal.h",
+            // "rte_errno.h",
+            // "rte_fbarray.h",
+            // "rte_function_versioning.h",
+            // "rte_hexdump.h",
+            // "rte_hypervisor.h",
+            // "rte_interrupts.h",
+            // "rte_keepalive.h",
+            // "rte_launch.h",
+            // "rte_lcore.h",
+            // "rte_log.h",
+            // "rte_malloc.h",
+            // "rte_memory.h",
+            // "rte_memzone.h",
+            // "rte_option.h",
+            // "rte_pci_dev_feature_defs.h",
+            // "rte_pci_dev_features.h",
+            // "rte_per_lcore.h",
             "rte_random.h",
-            "rte_reciprocal.h",
-            "rte_service_component.h",
-            "rte_service.h",
-            "rte_string_fns.h",
-            "rte_tailq.h",
-            "rte_test.h",
+            // "rte_reciprocal.h",
+            // "rte_service_component.h",
+            // "rte_service.h",
+            // "rte_string_fns.h",
+            // "rte_tailq.h",
+            // "rte_test.h",
             "rte_time.h",
             "rte_uuid.h",
             "rte_version.h",
-            "rte_vfio.h",
+            // "rte_vfio.h",
         ];
         let mut use_def_map = HashMap::new();
 
@@ -508,34 +508,31 @@ impl State {
                     continue;
                 }
 
-                if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
-                    // Declaration of static function is found (skip if function name starts with _).
-                    let c_return_type_string = return_type.get_display_name();
-                    let rust_return_type_string =
-                        some_or!(arg_type_whitelist.get(&c_return_type_string), {
-                            continue;
-                        });
-                    let args = f.get_arguments().unwrap_or(Vec::new());
-                    let mut has_unsupported_arg = false;
-                    let mut arg_names = Vec::new();
-                    let mut rust_arg_names = Vec::new();
-                    for (counter, arg) in args.iter().enumerate() {
-                        let arg_name = arg
-                            .get_display_name()
-                            .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
-                        let c_type_name = arg.get_type().unwrap().get_display_name();
-                        let rust_type_name = some_or!(arg_type_whitelist.get(&c_type_name), {
-                            has_unsupported_arg = true;
-                            break;
-                        });
-                        rust_arg_names.push(format!("{}: {}", arg_name, rust_type_name));
-                        arg_names.push(String::from(arg_name));
-                    }
-                    if has_unsupported_arg {
+                let c_return_type_string = return_type.get_display_name();
+                let rust_return_type_string =
+                    some_or!(arg_type_whitelist.get(&c_return_type_string), {
                         continue;
-                    }
-                    use_def_map.insert(name.clone(), format!("\n{comment}\n#[inline(always)]\nfn {name} ( &self, {rust_args} ) -> {ret} {{\n\tunsafe {{ crate::{name}({c_arg}) }}\n}}", comment=comment, name=name, rust_args=rust_arg_names.join(", "), ret=rust_return_type_string, c_arg=arg_names.iter().map(|arg| format!("{}", arg)).collect::<Vec<_>>().join(", ")));
+                    });
+                let args = f.get_arguments().unwrap_or(Vec::new());
+                let mut has_unsupported_arg = false;
+                let mut arg_names = Vec::new();
+                let mut rust_arg_names = Vec::new();
+                for (counter, arg) in args.iter().enumerate() {
+                    let arg_name = arg
+                        .get_display_name()
+                        .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
+                    let c_type_name = arg.get_type().unwrap().get_display_name();
+                    let rust_type_name = some_or!(arg_type_whitelist.get(&c_type_name), {
+                        has_unsupported_arg = true;
+                        break;
+                    });
+                    rust_arg_names.push(format!("{}: {}", arg_name, rust_type_name));
+                    arg_names.push(String::from(arg_name));
                 }
+                if has_unsupported_arg {
+                    continue;
+                }
+                use_def_map.insert(name.clone(), format!("\n{comment}\n#[inline(always)]\nfn {name} ( &self, {rust_args} ) -> {ret} {{\n\tunsafe {{ crate::{name}({c_arg}) }}\n}}", comment=comment, name=name, rust_args=rust_arg_names.join(", "), ret=rust_return_type_string, c_arg=arg_names.iter().map(|arg| format!("{}", arg)).collect::<Vec<_>>().join(", ")));
             }
         }
         self.eal_function_use_defs = use_def_map.values().cloned().collect();
