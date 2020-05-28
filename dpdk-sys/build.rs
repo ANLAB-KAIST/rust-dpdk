@@ -41,6 +41,18 @@ fn check_direct_include(path: &Path) -> bool {
     true
 }
 
+fn strip_comments(comment: String) -> String {
+    comment
+        .split('\n')
+        .map(|line| {
+            line.trim_matches(|c| c == ' ' || c == '/' || c == '*')
+                .replace("\t", "    ")
+        })
+        .map(|line| format!("/// {}", line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Information needed to generate DPDK binding.
 ///
 /// Each information is filled at different build stages.
@@ -495,16 +507,16 @@ impl State {
                 let storage = some_or!(f.get_storage_class(), continue);
                 let return_type = some_or!(f.get_result_type(), continue);
                 let is_decl = f.is_definition();
-                let comment = some_or!(f.get_comment(), continue);
+                let comment = strip_comments(some_or!(f.get_comment(), continue));
                 if use_def_map.contains_key(&name) {
                     continue;
                 }
-                if storage == clang::StorageClass::None && !is_decl && !name.starts_with('_') {
-                } else if storage == clang::StorageClass::Static
-                    && is_decl
-                    && !name.starts_with('_')
+                if name.starts_with('_') {
+                    continue;
+                }
+                if !(storage == clang::StorageClass::None && !is_decl
+                    || is_decl && storage == clang::StorageClass::Static)
                 {
-                } else {
                     continue;
                 }
 
@@ -513,7 +525,7 @@ impl State {
                     some_or!(arg_type_whitelist.get(&c_return_type_string), {
                         continue;
                     });
-                let args = f.get_arguments().unwrap_or(Vec::new());
+                let args = f.get_arguments().unwrap_or_default();
                 let mut has_unsupported_arg = false;
                 let mut arg_names = Vec::new();
                 let mut rust_arg_names = Vec::new();
@@ -527,12 +539,17 @@ impl State {
                         break;
                     });
                     rust_arg_names.push(format!("{}: {}", arg_name, rust_type_name));
-                    arg_names.push(String::from(arg_name));
+                    arg_names.push(arg_name);
                 }
                 if has_unsupported_arg {
                     continue;
                 }
-                use_def_map.insert(name.clone(), format!("\n{comment}\n#[inline(always)]\nfn {name} ( &self, {rust_args} ) -> {ret} {{\n\tunsafe {{ crate::{name}({c_arg}) }}\n}}", comment=comment, name=name, rust_args=rust_arg_names.join(", "), ret=rust_return_type_string, c_arg=arg_names.iter().map(|arg| format!("{}", arg)).collect::<Vec<_>>().join(", ")));
+                let ret = if rust_return_type_string == "()" {
+                    String::new()
+                } else {
+                    format!(" -> {}", rust_return_type_string)
+                };
+                use_def_map.insert(name.clone(), format!("\n{comment}\n#[inline(always)]\nfn {name} ( &self, {rust_args} ){ret} {{\n\tunsafe {{ crate::{name}({c_arg}) }}\n}}", comment=comment, name=name, rust_args=rust_arg_names.join(", "), ret=ret, c_arg=arg_names.join(", ")));
             }
         }
         self.eal_function_use_defs = use_def_map.values().cloned().collect();
@@ -652,7 +669,7 @@ impl State {
             "fm10k_get_pcie_msix_count_generic", // fm10k
         ]
         .iter()
-        .map(|name| name.to_string())
+        .map(|name| (*name).to_string())
         .collect();
 
         // List of non-static PMD-specific functions used to create symbolic dependencies to PMDs.
@@ -669,12 +686,12 @@ impl State {
             "uint16_t fm10k_get_pcie_msix_count_generic(struct fm10k_hw *hw)", // fm10k
         ]
         .iter()
-        .map(|name| name.to_string())
+        .map(|name| (*name).to_string())
         .collect();
 
         // Currently, we use whitelist instead of extracted function list from DPDK library.  See
         // `linkable_pmd_functions` field of `State` for more information.
-        self.linkable_pmd_functions = linkable_whitelist.clone();
+        self.linkable_pmd_functions = linkable_whitelist;
 
         // Create `extern` definition for each symbol.
         let linkable_extern_defs = linkable_extern_def_list
