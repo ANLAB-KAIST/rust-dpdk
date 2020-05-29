@@ -2,10 +2,12 @@ extern crate bindgen;
 extern crate cc;
 extern crate clang;
 extern crate etrace;
+extern crate itertools;
 extern crate num_cpus;
 extern crate regex;
 
 use etrace::some_or;
+use itertools::Itertools;
 use regex::Regex;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -50,7 +52,6 @@ fn strip_comments(comment: String) -> String {
                 .replace("\t", "    ")
         })
         .map(|line| format!("/// {}", line))
-        .collect::<Vec<_>>()
         .join("\n")
 }
 
@@ -677,11 +678,9 @@ impl State {
         let header_defs = static_def_list
             .iter()
             .map(|def_| format!("{};", def_))
-            .collect::<Vec<_>>()
             .join("\n");
         let static_impls = Iterator::zip(static_def_list.iter(), static_impl_list.iter())
             .map(|(def_, decl_)| format!("{}{}", def_, decl_))
-            .collect::<Vec<_>>()
             .join("\n");
 
         // List of manually enabled DPDK PMDs
@@ -728,7 +727,6 @@ impl State {
         let linkable_extern_defs = linkable_extern_def_list
             .iter()
             .map(|name| format!("extern {name};", name = name))
-            .collect::<Vec<_>>()
             .join("\n");
 
         // Create explicit symbolic links to PMDs from `rust-dpdk-sys` rust library.  We will
@@ -743,7 +741,6 @@ impl State {
                     name = name
                 )
             })
-            .collect::<Vec<_>>()
             .join("\n");
 
         // Generate header file from template
@@ -805,7 +802,6 @@ impl State {
                     name = name
                 )
             })
-            .collect::<Vec<_>>()
             .join("\n");
 
         let explicit_use_string = self
@@ -818,13 +814,11 @@ impl State {
                     name = name
                 )
             })
-            .collect::<Vec<_>>()
             .join("\n");
         let explicit_invoke_string = self
             .linkable_pmd_functions
             .iter()
             .map(|name| format!("\t\t{prefix}{name}();", prefix = PREFIX, name = name))
-            .collect::<Vec<_>>()
             .join("\n");
 
         let mut template = File::open(template_path).unwrap();
@@ -842,7 +836,6 @@ impl State {
                 .eal_function_use_defs
                 .iter()
                 .map(|item| item.replace("\n", "\n\t"))
-                .collect::<Vec<_>>()
                 .join("\n"),
         );
 
