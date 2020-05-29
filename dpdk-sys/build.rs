@@ -151,15 +151,16 @@ impl State {
             .arguments(&argument)
             .parse()
             .unwrap();
-        let diagnostics = trans_unit.get_diagnostics();
-        let mut fatal_count = 0;
-        for diagnostic in diagnostics {
-            if let clang::diagnostic::Severity::Fatal = diagnostic.get_severity() {
-                fatal_count += 1;
-            }
-        }
-        if fatal_count > 0 {
-            panic!(format!("Encountering {} fatal parse errors", fatal_count));
+        let fatal_diagnostics = trans_unit
+            .get_diagnostics()
+            .iter()
+            .filter(|diagnostic| clang::diagnostic::Severity::Fatal == diagnostic.get_severity())
+            .count();
+        if fatal_diagnostics > 0 {
+            panic!(format!(
+                "Encountering {} fatal parse error(s)",
+                fatal_diagnostics
+            ));
         }
         trans_unit
     }
@@ -513,7 +514,7 @@ impl State {
             let trans_unit = self.trans_unit_from_header(&index, header_path);
 
             // Iterate through each EAL header files and extract function definitions.
-            for f in trans_unit
+            'each_function: for f in trans_unit
                 .get_entity()
                 .get_children()
                 .into_iter()
@@ -525,47 +526,61 @@ impl State {
                 let is_decl = f.is_definition();
                 let comment = strip_comments(some_or!(f.get_comment(), continue));
                 if use_def_map.contains_key(&name) {
+                    // Skip duplicate
                     continue;
                 }
                 if name.starts_with('_') {
+                    // Skip hidden implementations
                     continue;
                 }
                 if !(storage == clang::StorageClass::None && !is_decl
                     || is_decl && storage == clang::StorageClass::Static)
                 {
+                    // We only accept if a function definition is found, or a `static inline`
+                    // function declaration is found.
                     continue;
                 }
 
+                // Extract type names in C and Rust.
                 let c_return_type_string = return_type.get_display_name();
                 let rust_return_type_string =
                     some_or!(arg_type_whitelist.get(&c_return_type_string), {
                         continue;
                     });
+
                 let args = f.get_arguments().unwrap_or_default();
-                let mut has_unsupported_arg = false;
                 let mut arg_names = Vec::new();
                 let mut rust_arg_names = Vec::new();
+                // Format arguments
                 for (counter, arg) in args.iter().enumerate() {
                     let arg_name = arg
                         .get_display_name()
                         .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
                     let c_type_name = arg.get_type().unwrap().get_display_name();
                     let rust_type_name = some_or!(arg_type_whitelist.get(&c_type_name), {
-                        has_unsupported_arg = true;
-                        break;
+                        // If the given C type is not supported as primitive Rust types. Skip
+                        // processing this function.
+                        continue 'each_function;
                     });
                     rust_arg_names.push(format!("{}: {}", arg_name, rust_type_name));
                     arg_names.push(arg_name);
                 }
-                if has_unsupported_arg {
-                    continue;
-                }
+                // Returning void (`-> ()`) triggers clippy error, skip.
                 let ret = if rust_return_type_string == "()" {
                     String::new()
                 } else {
                     format!(" -> {}", rust_return_type_string)
                 };
-                use_def_map.insert(name.clone(), format!("\n{comment}\n#[inline(always)]\nfn {name} ( &self, {rust_args} ){ret} {{\n\tunsafe {{ crate::{name}({c_arg}) }}\n}}", comment=comment, name=name, rust_args=rust_arg_names.join(", "), ret=ret, c_arg=arg_names.join(", ")));
+                /*
+                Following code generates trait function definitions like this:
+
+                /// Comment from C
+                #[inline(always)]
+                fn function_name ( &self, arg: u8 ) -> u8 {
+                    unsafe { crate::rte_function_name(arg) }
+                }
+                */
+                use_def_map.insert(name.clone(), format!("\n{comment}\n#[inline(always)]\nfn {func_name} ( &self, {rust_args} ){ret} {{\n\tunsafe {{ crate::{name}({c_arg}) }}\n}}", comment=comment, func_name=name.trim_start_matches("rte_"), name=name, rust_args=rust_arg_names.join(", "), ret=ret, c_arg=arg_names.join(", ")));
             }
         }
         self.eal_function_use_defs = use_def_map.values().cloned().collect();
