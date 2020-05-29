@@ -6,4 +6,7 @@ extern crate thiserror;
 mod ffi;
 
 pub mod eal;
-pub mod prelude;
+
+pub mod prelude {
+    pub use eal::EalGlobalApi;
+}

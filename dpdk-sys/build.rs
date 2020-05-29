@@ -41,6 +41,7 @@ fn check_direct_include(path: &Path) -> bool {
     true
 }
 
+/// Convert `/**` comments into `///` comments
 fn strip_comments(comment: String) -> String {
     comment
         .split('\n')
@@ -408,7 +409,17 @@ impl State {
     }
 
     /// Extract trivial EAL APIs whose paramter types are all primitive (e.g. `uint8_t`).
+    ///
+    /// This function does followings:
+    /// 1. List up all headers in `librte_eal/include/generic`
+    /// 1. Also list up some selected headers in `librte_eal/include`
+    /// 1. Extract all function in the listed headers.
+    /// 1. Filter out "trivial" FFI implementations. For instance, a function whose arguments and
+    ///    return type are primitive types.
+    /// 1. Generate a trait which trivially invokes the selected foriegn functions.
+    /// 1. Remove `rte_` prefix of them.
     fn extract_eal_apis(&mut self) {
+        // List of acceptable primitive types.
         let arg_type_whitelist: HashMap<_, _> = vec![
             ("void", "()"),
             ("int", "i32"),
@@ -485,18 +496,23 @@ impl State {
             "rte_version.h",
             // "rte_vfio.h",
         ];
+
+        // Set of function definition strings (Rust), coupled with function names.
+        // This will prevent duplicated function definitions.
         let mut use_def_map = HashMap::new();
 
         for header_name in &headers_whitelist {
             let header_path = self.include_path.as_ref().unwrap().join(header_name);
             if !header_path.exists() {
+                // In case where our whitelist is outdated.
+                println!("cargo:warning=EAL header whitelist is outdated. Contact maintainers.");
                 continue;
             }
             let clang = clang::Clang::new().unwrap();
             let index = clang::Index::new(&clang, true, true);
             let trans_unit = self.trans_unit_from_header(&index, header_path);
 
-            // Iterate through each EAL header files.
+            // Iterate through each EAL header files and extract function definitions.
             for f in trans_unit
                 .get_entity()
                 .get_children()

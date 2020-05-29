@@ -36,8 +36,9 @@ impl Eal {
         })
     }
 }
+pub use super::dpdk_sys::EalStaticFunctions as EalGlobalApi;
 
-unsafe impl dpdk_sys::StaticEalFunctions for Eal {}
+unsafe impl EalGlobalApi for Eal {}
 
 impl EalInner {
     // Create `EalInner`.
