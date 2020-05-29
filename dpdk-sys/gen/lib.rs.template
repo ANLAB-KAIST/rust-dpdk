@@ -2,28 +2,23 @@
 %static_use_defs%
 
 extern "C" {
-%persist_use_defs%
+%explicit_use_defs%
 }
 
 /// Return persist links
-pub fn persist_links() -> Vec<*mut ::std::os::raw::c_void> {
+pub fn load_drivers() {
+    // # Safety
+    // Following function calls return function pointers.
+    // In most cases, they have no effect.
     unsafe {
-        return vec![
-%persist_invokes%
-            ];
+%explicit_invokes%
     }
 }
 
-/// Get all PMD(poll-mode driver)'s name.
-#[inline]
-pub fn pmd_list() -> Vec<String> {
-let str_vec = vec![%pmd_list%
-];
-let mut string_vec = vec![];
-for x in str_vec {
-let mut s = String::new();
-s.push_str(x);
-string_vec.push(s);
-}
-string_vec
+/// Auto-generated Static EAL functions
+/// 
+/// # Safety
+/// This implementation must be used after `rte_eal_init` and never used after `rte_eal_cleanup`.
+pub unsafe trait EalStaticFunctions {
+%static_eal_functions%
 }

@@ -2,12 +2,15 @@ extern crate bindgen;
 extern crate cc;
 extern crate clang;
 extern crate etrace;
+extern crate itertools;
 extern crate num_cpus;
 extern crate regex;
 
 use etrace::some_or;
+use itertools::Itertools;
 use regex::Regex;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::env;
 use std::fs::*;
 use std::io::*;
@@ -40,6 +43,18 @@ fn check_direct_include(path: &Path) -> bool {
     true
 }
 
+/// Convert `/**` comments into `///` comments
+fn strip_comments(comment: String) -> String {
+    comment
+        .split('\n')
+        .map(|line| {
+            line.trim_matches(|c| c == ' ' || c == '/' || c == '*')
+                .replace("\t", "    ")
+        })
+        .map(|line| format!("/// {}", line))
+        .join("\n")
+}
+
 /// Information needed to generate DPDK binding.
 ///
 /// Each information is filled at different build stages.
@@ -69,17 +84,20 @@ struct State {
     /// DPDK config file (will be included as a predefined macro file).
     dpdk_config: Option<PathBuf>,
 
+    /// Use definitions for automatically found EAL APIs.
+    eal_function_use_defs: Vec<String>,
+
     /// Names of `static inline` functions found in DPDK headers.
     static_functions: Vec<String>,
 
-    /// Names of non-static, PMD-specific functions. We use them to create explicit symbolic
-    /// dependencies to PMDs.
+    /// Names of linkable (non-static) PMD-specific functions. We use them to create explicit
+    /// symbolic dependencies to PMDs.
     ///
     /// Currently, DPDK's conditional build is incomplete. For example, declaration of
     /// `rte_pmd_ixgbe_bypass_wd_reset` is controlled by `RTE_LIBRTE_IXGBE_BYPASS`, but its
     /// definition is not.  Thus, we fallback to use explicit whitelist rather than automatically
     /// detect non-static symbols.
-    persist_functions: Vec<String>,
+    linkable_pmd_functions: Vec<String>,
 }
 
 impl State {
@@ -97,9 +115,55 @@ impl State {
             dpdk_headers: Default::default(),
             dpdk_links: Default::default(),
             dpdk_config: Default::default(),
+            eal_function_use_defs: Default::default(),
             static_functions: Default::default(),
-            persist_functions: Default::default(),
+            linkable_pmd_functions: Default::default(),
         }
+    }
+
+    /// Create clang trans unit from given header file.
+    /// This function will fill options from current `State`.
+    fn trans_unit_from_header<'a>(
+        &self,
+        index: &'a clang::Index,
+        header_path: PathBuf,
+    ) -> clang::TranslationUnit<'a> {
+        let mut argument = vec![
+            "-march=native".into(),
+            format!(
+                "-I{}",
+                self.include_path.as_ref().unwrap().to_str().unwrap()
+            ),
+            //.to_string(),
+            format!("-I{}", self.out_path.to_str().unwrap()), //.to_string(),
+            "-imacros".into(),
+            self.dpdk_config
+                .as_ref()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string(),
+        ];
+        for path in self.system_include_path.iter() {
+            argument.push(format!("-I{}", path).to_string());
+        }
+        let trans_unit = index
+            .parser(header_path)
+            .arguments(&argument)
+            .parse()
+            .unwrap();
+        let fatal_diagnostics = trans_unit
+            .get_diagnostics()
+            .iter()
+            .filter(|diagnostic| clang::diagnostic::Severity::Fatal == diagnostic.get_severity())
+            .count();
+        if fatal_diagnostics > 0 {
+            panic!(format!(
+                "Encountering {} fatal parse error(s)",
+                fatal_diagnostics
+            ));
+        }
+        trans_unit
     }
 
     /// Check current OS.
@@ -346,45 +410,189 @@ impl State {
         target.write_fmt(format_args!("{}", formatted_string)).ok();
     }
 
-    /// Generate wrappers for static functions and create persistent link for PMDs.
-    fn generate_static_impls_and_link_pmds(&mut self) {
-        let clang = clang::Clang::new().unwrap();
-        let index = clang::Index::new(&clang, true, true);
-        let header_path = self.out_path.join("dpdk.h");
-        let mut argument = vec![
-            "-march=native".into(),
-            format!(
-                "-I{}",
-                self.include_path.as_ref().unwrap().to_str().unwrap()
-            ),
-            //.to_string(),
-            format!("-I{}", self.out_path.to_str().unwrap()), //.to_string(),
-            "-imacros".into(),
-            self.dpdk_config
-                .as_ref()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string(),
+    /// Extract trivial EAL APIs whose paramter types are all primitive (e.g. `uint8_t`).
+    ///
+    /// This function does followings:
+    /// 1. List up all headers in `librte_eal/include/generic`
+    /// 1. Also list up some selected headers in `librte_eal/include`
+    /// 1. Extract all function in the listed headers.
+    /// 1. Filter out "trivial" FFI implementations. For instance, a function whose arguments and
+    ///    return type are primitive types.
+    /// 1. Generate a trait which trivially invokes the selected foriegn functions.
+    /// 1. Remove `rte_` prefix of them.
+    fn extract_eal_apis(&mut self) {
+        // List of acceptable primitive types.
+        let arg_type_whitelist: HashMap<_, _> = vec![
+            ("void", "()"),
+            ("int", "i32"),
+            ("unsigned int", "u32"),
+            ("size_t", "usize"),
+            ("ssize_t", "isize"),
+            ("uint8_t", "u8"),
+            ("uint16_t", "u16"),
+            ("uint32_t", "u32"),
+            ("uint64_t", "u64"),
+            ("int8_t", "i8"),
+            ("int16_t", "i16"),
+            ("int32_t", "i32"),
+            ("int64_t", "i64"),
+        ]
+        .iter()
+        .map(|(c_type, rust_type)| (String::from(*c_type), String::from(*rust_type)))
+        .collect();
+        let headers_whitelist = vec![
+            // From librte_eal/include/generic
+            "rte_atomic.h",
+            "rte_byteorder.h",
+            "rte_cpuflags.h",
+            "rte_cycles.h",
+            "rte_io.h",
+            "rte_mcslock.h",
+            "rte_memcpy.h",
+            "rte_pause.h",
+            "rte_prefetch.h",
+            "rte_rwlock.h",
+            "rte_spinlock.h",
+            "rte_ticketlock.h",
+            "rte_vect.h",
+            // From librte_eal/include
+            // "rte_alarm.h",
+            // "rte_bitmap.h",
+            // "rte_branch_prediction.h",
+            // "rte_bus.h",
+            // "rte_class.h",
+            "rte_common.h",
+            // "rte_compat.h",
+            // "rte_debug.h",
+            // "rte_dev.h",
+            // "rte_devargs.h",
+            // "rte_eal_interrupts.h",
+            // "rte_eal_memconfig.h",
+            // "rte_eal.h",
+            // "rte_errno.h",
+            // "rte_fbarray.h",
+            // "rte_function_versioning.h",
+            // "rte_hexdump.h",
+            // "rte_hypervisor.h",
+            // "rte_interrupts.h",
+            // "rte_keepalive.h",
+            // "rte_launch.h",
+            // "rte_lcore.h",
+            // "rte_log.h",
+            // "rte_malloc.h",
+            // "rte_memory.h",
+            // "rte_memzone.h",
+            // "rte_option.h",
+            // "rte_pci_dev_feature_defs.h",
+            // "rte_pci_dev_features.h",
+            // "rte_per_lcore.h",
+            "rte_random.h",
+            // "rte_reciprocal.h",
+            // "rte_service_component.h",
+            // "rte_service.h",
+            // "rte_string_fns.h",
+            // "rte_tailq.h",
+            // "rte_test.h",
+            "rte_time.h",
+            "rte_uuid.h",
+            "rte_version.h",
+            // "rte_vfio.h",
         ];
-        for path in self.system_include_path.iter() {
-            argument.push(format!("-I{}", path).to_string());
-        }
-        let trans_unit = index
-            .parser(header_path)
-            .arguments(&argument)
-            .parse()
-            .unwrap();
-        let diagnostics = trans_unit.get_diagnostics();
-        let mut fatal_count = 0;
-        for diagnostic in diagnostics {
-            if let clang::diagnostic::Severity::Fatal = diagnostic.get_severity() {
-                fatal_count += 1;
+
+        // Set of function definition strings (Rust), coupled with function names.
+        // This will prevent duplicated function definitions.
+        let mut use_def_map = HashMap::new();
+
+        for header_name in &headers_whitelist {
+            let header_path = self.include_path.as_ref().unwrap().join(header_name);
+            if !header_path.exists() {
+                // In case where our whitelist is outdated.
+                println!("cargo:warning=EAL header whitelist is outdated. Contact maintainers.");
+                continue;
+            }
+            let clang = clang::Clang::new().unwrap();
+            let index = clang::Index::new(&clang, true, true);
+            let trans_unit = self.trans_unit_from_header(&index, header_path);
+
+            // Iterate through each EAL header files and extract function definitions.
+            'each_function: for f in trans_unit
+                .get_entity()
+                .get_children()
+                .into_iter()
+                .filter(|e| e.get_kind() == clang::EntityKind::FunctionDecl)
+            {
+                let name = some_or!(f.get_name(), continue);
+                let storage = some_or!(f.get_storage_class(), continue);
+                let return_type = some_or!(f.get_result_type(), continue);
+                let is_decl = f.is_definition();
+                let comment = strip_comments(some_or!(f.get_comment(), continue));
+                if use_def_map.contains_key(&name) {
+                    // Skip duplicate
+                    continue;
+                }
+                if name.starts_with('_') {
+                    // Skip hidden implementations
+                    continue;
+                }
+                if !(storage == clang::StorageClass::None && !is_decl
+                    || is_decl && storage == clang::StorageClass::Static)
+                {
+                    // We only accept if a function definition is found, or a `static inline`
+                    // function declaration is found.
+                    continue;
+                }
+
+                // Extract type names in C and Rust.
+                let c_return_type_string = return_type.get_display_name();
+                let rust_return_type_string =
+                    some_or!(arg_type_whitelist.get(&c_return_type_string), {
+                        continue;
+                    });
+
+                let args = f.get_arguments().unwrap_or_default();
+                let mut arg_names = Vec::new();
+                let mut rust_arg_names = Vec::new();
+                // Format arguments
+                for (counter, arg) in args.iter().enumerate() {
+                    let arg_name = arg
+                        .get_display_name()
+                        .unwrap_or_else(|| format!("_unnamed_arg{}", counter));
+                    let c_type_name = arg.get_type().unwrap().get_display_name();
+                    let rust_type_name = some_or!(arg_type_whitelist.get(&c_type_name), {
+                        // If the given C type is not supported as primitive Rust types. Skip
+                        // processing this function.
+                        continue 'each_function;
+                    });
+                    rust_arg_names.push(format!("{}: {}", arg_name, rust_type_name));
+                    arg_names.push(arg_name);
+                }
+                // Returning void (`-> ()`) triggers clippy error, skip.
+                let ret = if rust_return_type_string == "()" {
+                    String::new()
+                } else {
+                    format!(" -> {}", rust_return_type_string)
+                };
+                /*
+                Following code generates trait function definitions like this:
+
+                /// Comment from C
+                #[inline(always)]
+                fn function_name ( &self, arg: u8 ) -> u8 {
+                    unsafe { crate::rte_function_name(arg) }
+                }
+                */
+                use_def_map.insert(name.clone(), format!("\n{comment}\n#[inline(always)]\nfn {func_name} ( &self, {rust_args} ){ret} {{\n\tunsafe {{ crate::{name}({c_arg}) }}\n}}", comment=comment, func_name=name.trim_start_matches("rte_"), name=name, rust_args=rust_arg_names.join(", "), ret=ret, c_arg=arg_names.join(", ")));
             }
         }
-        if fatal_count > 0 {
-            panic!(format!("Encountering {} fatal parse errors", fatal_count));
-        }
+        self.eal_function_use_defs = use_def_map.values().cloned().collect();
+    }
+
+    /// Generate wrappers for static functions and create explicit links for PMDs.
+    fn generate_static_impls_and_link_pmds(&mut self) {
+        let header_path = self.out_path.join("dpdk.h");
+        let clang = clang::Clang::new().unwrap();
+        let index = clang::Index::new(&clang, true, true);
+        let trans_unit = self.trans_unit_from_header(&index, header_path);
 
         // List of `static inline` functions (definitions).
         let mut static_def_list = vec![];
@@ -428,7 +636,7 @@ impl State {
 
             if storage == clang::StorageClass::None && !is_decl && name.starts_with("rte_pmd_") {
                 // non-static function definition for a PMD is found.
-                self.persist_functions.push(name);
+                self.linkable_pmd_functions.push(name);
             } else if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
                 // Declaration of static function is found (skip if function name starts with _).
                 let mut arg_strings = Vec::new();
@@ -470,15 +678,13 @@ impl State {
         let header_defs = static_def_list
             .iter()
             .map(|def_| format!("{};", def_))
-            .collect::<Vec<_>>()
             .join("\n");
         let static_impls = Iterator::zip(static_def_list.iter(), static_impl_list.iter())
             .map(|(def_, decl_)| format!("{}{}", def_, decl_))
-            .collect::<Vec<_>>()
             .join("\n");
 
         // List of manually enabled DPDK PMDs
-        let persist_whitelist: Vec<_> = vec![
+        let linkable_whitelist: Vec<_> = vec![
             "rte_pmd_ixgbe_set_all_queues_drop_en", // ixgbe
             "rte_pmd_i40e_ping_vfs",                // i40e
             "e1000_igb_init_log",                   // e1000
@@ -493,11 +699,11 @@ impl State {
             "fm10k_get_pcie_msix_count_generic", // fm10k
         ]
         .iter()
-        .map(|name| name.to_string())
+        .map(|name| (*name).to_string())
         .collect();
 
         // List of non-static PMD-specific functions used to create symbolic dependencies to PMDs.
-        let persist_extern_def_list: Vec<_> = vec![
+        let linkable_extern_def_list: Vec<_> = vec![
             "void e1000_igb_init_log(void)",                           // e1000
             "int ice_release_vsi(struct ice_vsi *vsi)",                // ice
             "void vmxnet3_dev_tx_queue_release(void *txq)",            // vmxnet3
@@ -510,24 +716,23 @@ impl State {
             "uint16_t fm10k_get_pcie_msix_count_generic(struct fm10k_hw *hw)", // fm10k
         ]
         .iter()
-        .map(|name| name.to_string())
+        .map(|name| (*name).to_string())
         .collect();
 
         // Currently, we use whitelist instead of extracted function list from DPDK library.  See
-        // `persist_functions` field of `State` for more information.
-        self.persist_functions = persist_whitelist.clone();
+        // `linkable_pmd_functions` field of `State` for more information.
+        self.linkable_pmd_functions = linkable_whitelist;
 
         // Create `extern` definition for each symbol.
-        let persist_extern_defs = persist_extern_def_list
+        let linkable_extern_defs = linkable_extern_def_list
             .iter()
             .map(|name| format!("extern {name};", name = name))
-            .collect::<Vec<_>>()
             .join("\n");
 
         // Create explicit symbolic links to PMDs from `rust-dpdk-sys` rust library.  We will
         // normalize each function symbol to return its address.
         let perlist_links = self
-            .persist_functions
+            .linkable_pmd_functions
             .iter()
             .map(|name| {
                 format!(
@@ -536,7 +741,6 @@ impl State {
                     name = name
                 )
             })
-            .collect::<Vec<_>>()
             .join("\n");
 
         // Generate header file from template
@@ -553,8 +757,8 @@ impl State {
         template.read_to_string(&mut template_string).ok();
         let formatted_string = template_string.replace("%static_impls%", &static_impls);
         let formatted_string =
-            formatted_string.replace("%persist_extern_defs%", &persist_extern_defs);
-        let formatted_string = formatted_string.replace("%persist_pmds%", &perlist_links);
+            formatted_string.replace("%linkable_extern_defs%", &linkable_extern_defs);
+        let formatted_string = formatted_string.replace("%explicit_pmd_links%", &perlist_links);
         let mut target = File::create(source_path).unwrap();
         target.write_fmt(format_args!("{}", &formatted_string)).ok();
     }
@@ -588,21 +792,6 @@ impl State {
         let template_path = self.project_path.join("gen/lib.rs.template");
         let target_path = self.out_path.join("lib.rs");
 
-        let format = Regex::new(r"rte_pmd_(\w+)").unwrap();
-
-        let pmds: Vec<_> = self
-            .dpdk_links
-            .iter()
-            .filter_map(|link| {
-                let link_name = link.file_stem().unwrap().to_str().unwrap();
-                format
-                    .captures(link_name)
-                    .map(|capture| format!("\"{}\"", &capture[1]))
-            })
-            .collect();
-
-        let pmds_string = pmds.join(",\n");
-
         let static_use_string = self
             .static_functions
             .iter()
@@ -613,11 +802,10 @@ impl State {
                     name = name
                 )
             })
-            .collect::<Vec<_>>()
             .join("\n");
 
-        let persist_use_string = self
-            .persist_functions
+        let explicit_use_string = self
+            .linkable_pmd_functions
             .iter()
             .map(|name| {
                 format!(
@@ -626,24 +814,30 @@ impl State {
                     name = name
                 )
             })
-            .collect::<Vec<_>>()
             .join("\n");
-        let persist_invoke_string = self
-            .persist_functions
+        let explicit_invoke_string = self
+            .linkable_pmd_functions
             .iter()
-            .map(|name| format!("\t\t\t{prefix}{name}(),", prefix = PREFIX, name = name))
-            .collect::<Vec<_>>()
+            .map(|name| format!("\t\t{prefix}{name}();", prefix = PREFIX, name = name))
             .join("\n");
 
         let mut template = File::open(template_path).unwrap();
         let mut template_string = String::new();
         template.read_to_string(&mut template_string).ok();
 
-        let formatted_string = template_string.replace("%pmd_list%", &pmds_string);
-        let formatted_string = formatted_string.replace("%static_use_defs%", &static_use_string);
-        let formatted_string = formatted_string.replace("%persist_use_defs%", &persist_use_string);
+        let formatted_string = template_string.replace("%static_use_defs%", &static_use_string);
         let formatted_string =
-            formatted_string.replace("%persist_invokes%", &persist_invoke_string);
+            formatted_string.replace("%explicit_use_defs%", &explicit_use_string);
+        let formatted_string =
+            formatted_string.replace("%explicit_invokes%", &explicit_invoke_string);
+        let formatted_string = formatted_string.replace(
+            "%static_eal_functions%",
+            &self
+                .eal_function_use_defs
+                .iter()
+                .map(|item| item.replace("\n", "\n\t"))
+                .join("\n"),
+        );
 
         let mut target = File::create(target_path).unwrap();
         target.write_fmt(format_args!("{}", formatted_string)).ok();
@@ -700,6 +894,7 @@ fn main() {
     state.find_dpdk();
     state.find_link_libs();
     state.make_all_in_one_header();
+    state.extract_eal_apis();
     state.generate_static_impls_and_link_pmds();
     state.generate_rust_def();
     state.generate_lib_rs();

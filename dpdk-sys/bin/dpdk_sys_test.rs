@@ -19,7 +19,6 @@ fn main() {
         let argc = c_argv.len();
         let ret = dpdk_sys::rte_eal_init(argc as c_int, argv.as_ptr() as *mut *mut c_char);
         assert!(ret >= 0);
-        println!("{:?}", dpdk_sys::pmd_list());
 
         assert_eq!(dpdk_sys::rte_is_power_of_2(7), 0);
         assert_eq!(dpdk_sys::rte_is_power_of_2(16), 1);
