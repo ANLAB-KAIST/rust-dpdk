@@ -25,6 +25,17 @@ pub enum EalError {
     ErrorCode { code: i32 },
 }
 
+/// Supported CPU layout
+#[derive(Debug)]
+pub enum CPULayout {
+    /// Each CPU has dedicated RX/TX queues for every NIC.
+    FullMesh,
+    /// Each CPU has dedicated TX queues for every NIC, but RX queues for NICs on same NUMA node.
+    RxNumaAffinity,
+    /// Each CPU has dedicated RX/TX queues for NICs on same NUMA node.
+    RxTxNumaAffinity,
+}
+
 impl Eal {
     /// Create an `Eal` instance.
     ///
@@ -35,7 +46,20 @@ impl Eal {
             inner: Arc::new(EalInner::new(args)?),
         })
     }
+
+    /// Candidate 1, return (thread, rxqs, txqs)
+    #[inline]
+    pub fn setup(&self, layout: CPULayout) -> impl Iterator<RteThread, Vec<RxQ>, Vec<TxQ>> {
+        panic!("not implemented.")
+    }
+
+    /// Candidate 2, get a functor for per-thread functions
+    #[inline]
+    pub fn launch(&self, layout: CPULayout, per_thread: Fn(Vec<RxQ>, Vec<TxQ>) -> Fn() -> impl Future) {
+        panic!("not implemented.")
+    }
 }
+
 pub use super::dpdk_sys::EalStaticFunctions as EalGlobalApi;
 
 unsafe impl EalGlobalApi for Eal {}
