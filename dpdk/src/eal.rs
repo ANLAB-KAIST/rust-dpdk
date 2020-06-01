@@ -1,14 +1,25 @@
 //! Wrapper for DPDK's environment abstraction layer (EAL).
 use ffi;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, Mutex};
 use thiserror::Error;
+use std::convert::TryInto;
+use log::{info, warn};
 
 #[derive(Debug)]
-struct EalSharedInner {} // TODO Remove this if unnecessary
+struct EalSharedInner {
+} // TODO Remove this if unnecessary
 
 #[derive(Debug)]
 struct EalInner {
     shared: RwLock<EalSharedInner>,
+
+    /// DPDK Eal object must be initialized by a single core.
+    /// 
+    /// Note: " The creation and initialization functions for these objects are not multi-thread safe.
+    /// However, once initialized, the objects themselves can safely be used in multiple threads
+    /// simultaneously."
+    /// - https://doc.dpdk.org/guides/prog_guide/env_abstraction_layer.html
+    global_lock: Mutex<bool>,
 }
 
 /// DPDK's environment abstraction layer (EAL).
@@ -36,6 +47,66 @@ pub enum CPULayout {
     RxTxNumaAffinity,
 }
 
+/// Abstract type for DPDK port
+#[derive(Debug, Clone)]
+pub struct Port {
+    inner: Arc<PortInner>,
+}
+
+#[derive(Debug)]
+struct PortInner {
+    port_id: i32,
+}
+
+impl Port {
+
+}
+
+/// Abstract type for DPDK MPool
+#[derive(Debug, Clone)]
+pub struct MPool {
+    inner: Arc<PortInner>,
+}
+
+#[derive(Debug)]
+struct MPoolInner {
+    //port_id: i32,
+}
+
+impl MPool {
+
+}
+
+/// Abstract type for DPDK RxQ
+#[derive(Debug, Clone)]
+pub struct RxQ {
+    inner: Arc<RxQInner>,
+}
+
+#[derive(Debug)]
+struct RxQInner {
+    //queue_id: i32,
+}
+
+impl RxQ {
+
+}
+
+/// Abstract type for DPDK TxQ
+#[derive(Debug, Clone)]
+pub struct TxQ {
+    inner: Arc<TxQInner>,
+}
+
+#[derive(Debug)]
+struct TxQInner {
+    //queue_id: i32,
+}
+
+impl TxQ {
+
+}
+
 impl Eal {
     /// Create an `Eal` instance.
     ///
@@ -48,15 +119,41 @@ impl Eal {
     }
 
     /// Candidate 1, return (thread, rxqs, txqs)
+    /// 
+    /// Note: rte_lcore_count: -c ff 옵션에 따라 줄어듬.
+    /// 
+    /// # Safety
+    /// All unsafe lines are for calling foriegn functions.
     #[inline]
-    pub fn setup(&self, layout: CPULayout) -> impl Iterator<RteThread, Vec<RxQ>, Vec<TxQ>> {
-        panic!("not implemented.")
-    }
+    pub fn setup(&self, layout: CPULayout) {
+        unsafe {
+            // If some cores are masked, range (0..rte_lcore_count()) will include disabled cores.
+            let lcore_id_list = (0..dpdk_sys::RTE_MAX_LCORE).filter(|index| dpdk_sys::rte_lcore_is_enabled(*index) > 0);
 
-    /// Candidate 2, get a functor for per-thread functions
-    #[inline]
-    pub fn launch(&self, layout: CPULayout, per_thread: Fn(Vec<RxQ>, Vec<TxQ>) -> Fn() -> impl Future) {
-        panic!("not implemented.")
+            // `(lcore_id, socket_id)` pair list
+            let lcore_socket_pair_list: Vec<_> = lcore_id_list.map(|lcore_id|{
+                let lcore_socket_id = dpdk_sys::rte_lcore_to_socket_id(lcore_id.try_into().unwrap());
+                let cpu_id = dpdk_sys::rte_lcore_to_cpu_id(lcore_id.try_into().unwrap());
+                let is_enabled = dpdk_sys::rte_lcore_is_enabled(lcore_id) > 0;
+                assert!(is_enabled);
+                println!("lcore id {} {}: socket {}, core {}.", lcore_id, is_enabled, lcore_socket_id, cpu_id);
+                (lcore_id, lcore_socket_id)
+            }).collect();
+            println!("lcore count: {}", lcore_socket_pair_list.len());
+
+            // TODO: For `RxNumaAffinity` and `RxTxNumaAffinity`
+            // let sort_by_lcore : Map<usize, Vec<usize>>;
+            let port_id_list = (0..dpdk_sys::RTE_MAX_ETHPORTS).filter(|index| dpdk_sys::rte_eth_dev_is_valid_port(*index as u16) > 0);
+            println!("port_id_list {:?}", port_id_list);
+            
+            match layout {
+                CPULayout::FullMesh => {
+                }
+                _ => {
+                    panic!("Not implemented");
+                }
+            }
+        }
     }
 }
 
@@ -83,6 +180,7 @@ impl EalInner {
         args.drain(..ret as usize);
         Ok(EalInner {
             shared: RwLock::new(EalSharedInner {}),
+            global_lock: Mutex::new(false)
         })
     }
 }
@@ -93,6 +191,10 @@ impl Drop for EalInner {
         // Safety: foriegn function (safe unless there is a bug)
         unsafe {
             let ret = dpdk_sys::rte_eal_cleanup();
+            if ret == - (dpdk_sys::ENOTSUP as i32) {
+                warn!("EAL Cleanup is not implemented.");
+                return;
+            }
             assert_eq!(ret, 0);
         }
     }

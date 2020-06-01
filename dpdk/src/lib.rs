@@ -2,6 +2,7 @@
 
 extern crate dpdk_sys;
 extern crate thiserror;
+extern crate log;
 
 mod ffi;
 
