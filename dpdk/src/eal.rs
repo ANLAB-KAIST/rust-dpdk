@@ -143,9 +143,11 @@ impl Eal {
 
             // TODO: For `RxNumaAffinity` and `RxTxNumaAffinity`
             // let sort_by_lcore : Map<usize, Vec<usize>>;
+
             let port_id_list = (0..dpdk_sys::RTE_MAX_ETHPORTS).filter(|index| dpdk_sys::rte_eth_dev_is_valid_port(*index as u16) > 0);
             println!("port_id_list {:?}", port_id_list);
             
+            // TODO Doing here
             match layout {
                 CPULayout::FullMesh => {
                 }
