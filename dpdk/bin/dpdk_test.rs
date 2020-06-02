@@ -9,6 +9,5 @@ fn main() {
     println!("TSC Hz: {}", eal.get_tsc_hz());
     println!("TSC Cycles: {}", eal.get_tsc_cycles());
     println!("Random: {}", eal.rand());
-    eal.setup(CPULayout::FullMesh);
-    drop(eal);
+    eal.setup(CpuLayout::FullMesh);
 }

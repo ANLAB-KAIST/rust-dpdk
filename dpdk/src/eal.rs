@@ -1,4 +1,5 @@
 //! Wrapper for DPDK's environment abstraction layer (EAL).
+use std::collections::{HashMap, HashSet};
 use ffi;
 use std::sync::{Arc, RwLock, Mutex};
 use thiserror::Error;
@@ -36,16 +37,17 @@ pub enum EalError {
     ErrorCode { code: i32 },
 }
 
-/// Supported CPU layout
-#[derive(Debug)]
-pub enum CPULayout {
-    /// Each CPU has dedicated RX/TX queues for every NIC.
-    FullMesh,
-    /// Each CPU has dedicated TX queues for every NIC, but RX queues for NICs on same NUMA node.
-    RxNumaAffinity,
-    /// Each CPU has dedicated RX/TX queues for NICs on same NUMA node.
-    RxTxNumaAffinity,
+/// How to create NIC queues for a CPU.
+pub enum Affinity { 
+    /// All NICs create queues for the CPU.
+    Full, 
+    /// NICs on the same NUMA node create queues for the CPU.
+    Numa 
 }
+
+/// Supported CPU layout
+pub struct CpuLayout { rx: Affinity, tx: Affinity }
+
 
 /// Abstract type for DPDK port
 #[derive(Debug, Clone)]
@@ -65,12 +67,11 @@ impl Port {
 /// Abstract type for DPDK MPool
 #[derive(Debug, Clone)]
 pub struct MPool {
-    inner: Arc<PortInner>,
+    inner: Arc<MPoolInner>,
 }
 
 #[derive(Debug)]
 struct MPoolInner {
-    //port_id: i32,
 }
 
 impl MPool {
@@ -122,15 +123,16 @@ impl Eal {
     /// 
     /// Note: rte_lcore_count: -c ff 옵션에 따라 줄어듬.
     /// 
-    /// # Safety
-    /// All unsafe lines are for calling foriegn functions.
     #[inline]
-    pub fn setup(&self, layout: CPULayout) {
+    pub fn setup(&self, layout: CpuLayout) {
+        /// # Safety
+        /// All unsafe lines are for calling foriegn functions.
         unsafe {
-            // If some cores are masked, range (0..rte_lcore_count()) will include disabled cores.
+            // List of valid logical core ids.
+            // Note: If some cores are masked, range (0..rte_lcore_count()) will include disabled cores.
             let lcore_id_list = (0..dpdk_sys::RTE_MAX_LCORE).filter(|index| dpdk_sys::rte_lcore_is_enabled(*index) > 0);
 
-            // `(lcore_id, socket_id)` pair list
+            // List of `(lcore_id, socket_id)` pairs.
             let lcore_socket_pair_list: Vec<_> = lcore_id_list.map(|lcore_id|{
                 let lcore_socket_id = dpdk_sys::rte_lcore_to_socket_id(lcore_id.try_into().unwrap());
                 let cpu_id = dpdk_sys::rte_lcore_to_cpu_id(lcore_id.try_into().unwrap());
@@ -141,20 +143,17 @@ impl Eal {
             }).collect();
             println!("lcore count: {}", lcore_socket_pair_list.len());
 
-            // TODO: For `RxNumaAffinity` and `RxTxNumaAffinity`
-            // let sort_by_lcore : Map<usize, Vec<usize>>;
+            // Sort lcore ids with map
+            let socket_to_lcore_map = lcore_socket_pair_list.iter().fold(HashMap::new(), |mut sort_by_socket, (lcore_id, socket_id)|{
+                sort_by_socket.entry(socket_id).or_insert_with(HashSet::new).insert(lcore_id);
+                sort_by_socket
+            });
 
             let port_id_list = (0..dpdk_sys::RTE_MAX_ETHPORTS).filter(|index| dpdk_sys::rte_eth_dev_is_valid_port(*index as u16) > 0);
             println!("port_id_list {:?}", port_id_list);
             
             // TODO Doing here
-            match layout {
-                CPULayout::FullMesh => {
-                }
-                _ => {
-                    panic!("Not implemented");
-                }
-            }
+            panic!("Not implemented");
         }
     }
 }
