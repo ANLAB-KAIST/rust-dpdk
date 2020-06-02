@@ -17,14 +17,6 @@ struct EalSharedInner {} // TODO Remove this if unnecessary
 #[derive(Debug)]
 struct EalInner {
     shared: RwLock<EalSharedInner>,
-
-    /// DPDK Eal object must be initialized by a single core.
-    ///
-    /// Note: " The creation and initialization functions for these objects are not multi-thread safe.
-    /// However, once initialized, the objects themselves can safely be used in multiple threads
-    /// simultaneously."
-    /// - https://doc.dpdk.org/guides/prog_guide/env_abstraction_layer.html
-    global_lock: Mutex<bool>,
 }
 
 /// DPDK's environment abstraction layer (EAL).
@@ -414,7 +406,6 @@ impl EalInner {
         args.drain(..ret as usize);
         Ok(EalInner {
             shared: RwLock::new(EalSharedInner {}),
-            global_lock: Mutex::new(false),
         })
     }
 }
