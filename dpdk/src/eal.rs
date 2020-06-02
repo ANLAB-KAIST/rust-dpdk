@@ -1,12 +1,12 @@
 //! Wrapper for DPDK's environment abstraction layer (EAL).
 use ffi;
-use log::{info, warn};
+use log::{debug, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::mem::size_of;
 use std::ptr::NonNull;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use thiserror::Error;
 
 const MAGIC: &'static str = "be0dd4ab";
@@ -214,9 +214,9 @@ impl Eal {
                     let cpu_id = dpdk_sys::rte_lcore_to_cpu_id(lcore_id.try_into().unwrap());
                     let is_enabled = dpdk_sys::rte_lcore_is_enabled(lcore_id) > 0;
                     assert!(is_enabled);
-                    println!(
-                        "lcore id {} {}: socket {}, core {}.",
-                        lcore_id, is_enabled, lcore_socket_id, cpu_id
+                    debug!(
+                        "Logical core {} is enabled at physical core {} (NUMA node {})",
+                        lcore_id, cpu_id, lcore_socket_id
                     );
                     (lcore_id, lcore_socket_id)
                 })
