@@ -5,8 +5,11 @@ use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::mem::size_of;
+use std::ptr::NonNull;
 use std::sync::{Arc, Mutex, RwLock};
 use thiserror::Error;
+
+const MAGIC: &'static str = "be0dd4ab";
 
 #[derive(Debug)]
 struct EalSharedInner {} // TODO Remove this if unnecessary
@@ -54,7 +57,8 @@ pub struct Port {
 
 #[derive(Debug)]
 struct PortInner {
-    port_id: i32,
+    port_id: u16,
+    eal: Eal,
 }
 
 impl Port {}
@@ -70,15 +74,31 @@ pub struct MPool {
 }
 
 #[derive(Debug)]
-struct MPoolInner {}
+struct MPoolInner {
+    eal: Eal,
+    ptr: NonNull<dpdk_sys::rte_mempool>,
+}
 
-impl MPoolInner {}
+/// # Safety
+/// Mempools are thread-safe.
+/// https://doc.dpdk.org/guides/prog_guide/thread_safety_dpdk_functions.html
+unsafe impl Send for MPoolInner {}
+unsafe impl Sync for MPoolInner {}
+
+impl Drop for MPoolInner {
+    #[inline]
+    fn drop(&mut self) {
+        // Safety: foreign function.
+        unsafe { dpdk_sys::rte_mempool_free(self.ptr.as_ptr()) }
+    }
+}
 
 impl MPool {
     /// Create a new `MPool`.
     /// Note: Pool name must be globally unique.
     #[inline]
     pub fn new<StringLike: Into<Vec<u8>>>(
+        eal: &Eal,
         name: StringLike,
         size: usize,
         per_core_cache_size: usize,
@@ -86,15 +106,50 @@ impl MPool {
         socket_id: i32,
     ) -> Self {
         let pool_name = CString::new(name).unwrap();
-        let pool = dpdk_sys::rte_pktmbuf_pool_create(
-            pool_name.into_bytes_with_nul().as_ptr() as *mut i8,
-            size.try_into().unwrap(),
-            per_core_cache_size as u32,
-            (((size_of::<MPoolPriv>() + 7) / 8) * 8) as u16,
-            data_len.try_into().unwrap(),
-            socket_id,
-        );
-        // TODO doing here
+
+        // Safety: foreign function.
+        let ptr = unsafe {
+            dpdk_sys::rte_pktmbuf_pool_create(
+                pool_name.into_bytes_with_nul().as_ptr() as *mut i8,
+                size.try_into().unwrap(),
+                per_core_cache_size as u32,
+                (((size_of::<MPoolPriv>() + 7) / 8) * 8) as u16,
+                data_len.try_into().unwrap(),
+                socket_id,
+            )
+        };
+        // The pointer to the new allocated mempool, on success. NULL on error with rte_errno set appropriately.
+        // https://doc.dpdk.org/api/rte__mbuf_8h.html
+        MPool {
+            inner: Arc::new(MPoolInner {
+                eal: eal.clone(),
+                ptr: NonNull::new(ptr).unwrap(),
+            }),
+        }
+    }
+
+    /// Allocate a `Packet` from the pool.
+    /// # Safety
+    /// Returned item must not outlive this pool.
+    #[inline]
+    pub unsafe fn allloc(&self) -> Option<Packet> {
+        // Safety: foreign function.
+        let pkt_ptr = unsafe { dpdk_sys::rte_pktmbuf_alloc(self.inner.ptr.as_ptr()) };
+
+        NonNull::new(pkt_ptr).map(|ptr| Packet { ptr })
+    }
+}
+
+#[derive(Debug)]
+pub struct Packet {
+    ptr: NonNull<dpdk_sys::rte_mbuf>,
+}
+
+impl Drop for Packet {
+    #[inline]
+    fn drop(&mut self) {
+        // Safety: foreign function.
+        unsafe { dpdk_sys::rte_pktmbuf_free(self.ptr.as_ptr()) }
     }
 }
 
@@ -106,7 +161,8 @@ pub struct RxQ {
 
 #[derive(Debug)]
 struct RxQInner {
-    //queue_id: i32,
+    queue_id: u16,
+    port: Port,
 }
 
 impl RxQ {}
@@ -119,7 +175,8 @@ pub struct TxQ {
 
 #[derive(Debug)]
 struct TxQInner {
-    //queue_id: i32,
+    queue_id: u16,
+    port: Port,
 }
 
 impl TxQ {}
@@ -138,7 +195,6 @@ impl Eal {
     /// Candidate 1, return (thread, rxqs, txqs)
     ///
     /// Note: rte_lcore_count: -c ff 옵션에 따라 줄어듬.
-    ///
     #[inline]
     pub fn setup(
         &self,
@@ -146,9 +202,11 @@ impl Eal {
         tx_affinity: Affinity,
         num_rx_desc: u16,
         num_tx_desc: u16,
+        num_rx_pool_size: usize,
+        per_core_cache_size: usize,
     ) {
-        /// # Safety
-        /// All unsafe lines are for calling foriegn functions.
+        // # Safety
+        // All unsafe lines are for calling foriegn functions.
         unsafe {
             // List of valid logical core ids.
             // Note: If some cores are masked, range (0..rte_lcore_count()) will include disabled cores.
@@ -189,9 +247,9 @@ impl Eal {
                 .filter(|index| dpdk_sys::rte_eth_dev_is_valid_port(*index) > 0);
             println!("port_id_list {:?}", port_id_list);
 
-            // List of `(port, vec<rx_lcore_ids>, vec<tx_lcore_ids>)`.
+            // List of `(port, port_socket_id, vec<rx_lcore_ids>, vec<tx_lcore_ids>)`.
             // Note: We need number of rx cores and tx cores at the same time (`rte_eth_dev_configure`)
-            let port_rx_tx_pairs = port_id_list.clone().map(|port_id| {
+            let port_socket_rx_tx_pairs = port_id_list.clone().map(|port_id| {
                 let port_socket_id = dpdk_sys::rte_eth_dev_socket_id(port_id);
                 let rx_lcore_for_this_port: Vec<_> = match rx_affinity {
                     Affinity::Full => lcore_id_list.clone().collect(),
@@ -213,73 +271,119 @@ impl Eal {
                         .cloned()
                         .collect(),
                 };
-                (port_id, rx_lcore_for_this_port, tx_lcore_for_this_port)
+                (
+                    Port {
+                        inner: Arc::new(PortInner {
+                            port_id,
+                            eal: self.clone(),
+                        }),
+                    },
+                    port_socket_id,
+                    rx_lcore_for_this_port,
+                    tx_lcore_for_this_port,
+                )
             });
 
             // Init each port
-            port_rx_tx_pairs.map(|(port_id, rx_cpus, tx_cpus)| {
-                // Safety: `rte_eth_dev_info` contains primitive integer types. Safe to fill with zeros.
-                let mut dev_info: dpdk_sys::rte_eth_dev_info = unsafe { std::mem::zeroed() };
-                dpdk_sys::rte_eth_dev_info_get(port_id, &mut dev_info);
+            let ret: Vec<_> = port_socket_rx_tx_pairs
+                .map(|(port, port_socket_id, rx_cpus, tx_cpus)| {
+                    let port_id = port.inner.port_id;
+                    // Safety: `rte_eth_dev_info` contains primitive integer types. Safe to fill with zeros.
+                    let mut dev_info: dpdk_sys::rte_eth_dev_info = unsafe { std::mem::zeroed() };
+                    dpdk_sys::rte_eth_dev_info_get(port_id, &mut dev_info);
 
-                let rx_queue_limit = dev_info.max_rx_queues;
-                let tx_queue_limit = dev_info.max_tx_queues;
-                let rx_queue_count: u16 = rx_cpus.len().try_into().unwrap();
-                let tx_queue_count: u16 = tx_cpus.len().try_into().unwrap();
+                    let rx_queue_limit = dev_info.max_rx_queues;
+                    let tx_queue_limit = dev_info.max_tx_queues;
+                    let rx_queue_count: u16 = rx_cpus.len().try_into().unwrap();
+                    let tx_queue_count: u16 = tx_cpus.len().try_into().unwrap();
 
-                assert!(rx_queue_count <= rx_queue_limit);
-                assert!(tx_queue_count <= tx_queue_limit);
+                    assert!(rx_queue_count <= rx_queue_limit);
+                    assert!(tx_queue_count <= tx_queue_limit);
 
-                assert!(num_rx_desc <= dev_info.rx_desc_lim.nb_max);
-                assert!(num_rx_desc >= dev_info.rx_desc_lim.nb_min);
-                assert!(num_rx_desc % dev_info.rx_desc_lim.nb_align == 0);
+                    assert!(num_rx_desc <= dev_info.rx_desc_lim.nb_max);
+                    assert!(num_rx_desc >= dev_info.rx_desc_lim.nb_min);
+                    assert!(num_rx_desc % dev_info.rx_desc_lim.nb_align == 0);
 
-                assert!(num_tx_desc <= dev_info.tx_desc_lim.nb_max);
-                assert!(num_tx_desc >= dev_info.tx_desc_lim.nb_min);
-                assert!(num_tx_desc % dev_info.tx_desc_lim.nb_align == 0);
+                    assert!(num_tx_desc <= dev_info.tx_desc_lim.nb_max);
+                    assert!(num_tx_desc >= dev_info.tx_desc_lim.nb_min);
+                    assert!(num_tx_desc % dev_info.tx_desc_lim.nb_align == 0);
 
-                // Safety: `rte_eth_conf` contains primitive integer types. Safe to fill with zeros.
-                let mut port_conf: dpdk_sys::rte_eth_conf = unsafe { std::mem::zeroed() };
-                port_conf.rxmode.max_rx_pkt_len = dpdk_sys::RTE_ETHER_MAX_LEN;
-                port_conf.rxmode.mq_mode = dpdk_sys::rte_eth_rx_mq_mode_ETH_MQ_RX_NONE;
-                port_conf.txmode.mq_mode = dpdk_sys::rte_eth_tx_mq_mode_ETH_MQ_TX_NONE;
-                if rx_queue_count > 1 {
-                    port_conf.rxmode.mq_mode = dpdk_sys::rte_eth_rx_mq_mode_ETH_MQ_RX_RSS;
-                    port_conf.rx_adv_conf.rss_conf.rss_hf = (dpdk_sys::ETH_RSS_NONFRAG_IPV4_UDP
-                        | dpdk_sys::ETH_RSS_NONFRAG_IPV4_TCP)
-                        .into();
-                    // TODO set symmetric RSS for TCP/IP
-                }
+                    // Safety: `rte_eth_conf` contains primitive integer types. Safe to fill with zeros.
+                    let mut port_conf: dpdk_sys::rte_eth_conf = unsafe { std::mem::zeroed() };
+                    port_conf.rxmode.max_rx_pkt_len = dpdk_sys::RTE_ETHER_MAX_LEN;
+                    port_conf.rxmode.mq_mode = dpdk_sys::rte_eth_rx_mq_mode_ETH_MQ_RX_NONE;
+                    port_conf.txmode.mq_mode = dpdk_sys::rte_eth_tx_mq_mode_ETH_MQ_TX_NONE;
+                    if rx_queue_count > 1 {
+                        port_conf.rxmode.mq_mode = dpdk_sys::rte_eth_rx_mq_mode_ETH_MQ_RX_RSS;
+                        port_conf.rx_adv_conf.rss_conf.rss_hf = (dpdk_sys::ETH_RSS_NONFRAG_IPV4_UDP
+                            | dpdk_sys::ETH_RSS_NONFRAG_IPV4_TCP)
+                            .into();
+                        // TODO set symmetric RSS for TCP/IP
+                    }
 
-                // Enable offload flags
-                if dev_info.rx_offload_capa & u64::from(dpdk_sys::DEV_RX_OFFLOAD_CHECKSUM) > 0 {
-                    info!("RX CKSUM Offloading is on for port {}", port_id);
-                    port_conf.rxmode.offloads |= u64::from(dpdk_sys::DEV_RX_OFFLOAD_CHECKSUM);
-                }
-                if dev_info.tx_offload_capa & u64::from(dpdk_sys::DEV_TX_OFFLOAD_IPV4_CKSUM) > 0 {
-                    info!("TX IPv4 CKSUM Offloading is on for port {}", port_id);
-                    port_conf.txmode.offloads |= u64::from(dpdk_sys::DEV_TX_OFFLOAD_IPV4_CKSUM);
-                }
-                if dev_info.tx_offload_capa & u64::from(dpdk_sys::DEV_TX_OFFLOAD_UDP_CKSUM) > 0 {
-                    info!("TX UDP CKSUM Offloading is on for port {}", port_id);
-                    port_conf.txmode.offloads |= u64::from(dpdk_sys::DEV_TX_OFFLOAD_UDP_CKSUM);
-                }
-                if dev_info.tx_offload_capa & u64::from(dpdk_sys::DEV_TX_OFFLOAD_TCP_CKSUM) > 0 {
-                    info!("TX TCP CKSUM Offloading is on for port {}", port_id);
-                    port_conf.txmode.offloads |= u64::from(dpdk_sys::DEV_TX_OFFLOAD_TCP_CKSUM);
-                }
+                    // Enable offload flags
+                    if dev_info.rx_offload_capa & u64::from(dpdk_sys::DEV_RX_OFFLOAD_CHECKSUM) > 0 {
+                        info!("RX CKSUM Offloading is on for port {}", port_id);
+                        port_conf.rxmode.offloads |= u64::from(dpdk_sys::DEV_RX_OFFLOAD_CHECKSUM);
+                    }
+                    if dev_info.tx_offload_capa & u64::from(dpdk_sys::DEV_TX_OFFLOAD_IPV4_CKSUM) > 0
+                    {
+                        info!("TX IPv4 CKSUM Offloading is on for port {}", port_id);
+                        port_conf.txmode.offloads |= u64::from(dpdk_sys::DEV_TX_OFFLOAD_IPV4_CKSUM);
+                    }
+                    if dev_info.tx_offload_capa & u64::from(dpdk_sys::DEV_TX_OFFLOAD_UDP_CKSUM) > 0
+                    {
+                        info!("TX UDP CKSUM Offloading is on for port {}", port_id);
+                        port_conf.txmode.offloads |= u64::from(dpdk_sys::DEV_TX_OFFLOAD_UDP_CKSUM);
+                    }
+                    if dev_info.tx_offload_capa & u64::from(dpdk_sys::DEV_TX_OFFLOAD_TCP_CKSUM) > 0
+                    {
+                        info!("TX TCP CKSUM Offloading is on for port {}", port_id);
+                        port_conf.txmode.offloads |= u64::from(dpdk_sys::DEV_TX_OFFLOAD_TCP_CKSUM);
+                    }
 
-                // Configure ports
-                let ret = dpdk_sys::rte_eth_dev_configure(
-                    port_id,
-                    rx_queue_count,
-                    tx_queue_count,
-                    &port_conf,
-                );
-                assert!(ret == 0);
+                    // Configure ports
+                    let ret = dpdk_sys::rte_eth_dev_configure(
+                        port_id,
+                        rx_queue_count,
+                        tx_queue_count,
+                        &port_conf,
+                    );
+                    assert!(ret == 0);
 
-                // Create MPool for RX
-            });
+                    let cpu_rxq_list = rx_cpus.iter().enumerate().map(|(rxq_idx, rx_cpu)| {
+                        // Create MPool for RX
+                        let pool_name = format!("rxq_{}_{}_{}", MAGIC, port_id, rxq_idx);
+                        let mpool = MPool::new(
+                            self,
+                            pool_name,
+                            num_rx_pool_size,
+                            per_core_cache_size,
+                            2048,
+                            port_socket_id,
+                        );
+                        let ret = dpdk_sys::rte_eth_rx_queue_setup(
+                            port_id,
+                            rxq_idx as u16,
+                            num_rx_desc,
+                            port_socket_id as u32,
+                            &dev_info.default_rxconf,
+                            mpool.inner.ptr.as_ptr(),
+                        );
+                        assert_eq!(ret, 0);
+
+                        (
+                            rx_cpu,
+                            RxQ {
+                                inner: Arc::new(RxQInner {
+                                    queue_id: rxq_idx as u16,
+                                    port: port.clone(),
+                                }),
+                            },
+                        )
+                    });
+                })
+                .collect();
 
             // TODO Doing here
             panic!("Not implemented");
