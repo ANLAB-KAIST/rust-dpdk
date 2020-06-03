@@ -11,10 +11,12 @@ use thiserror::Error;
 
 const MAGIC: &str = "be0dd4ab";
 
-const DEFAULT_TX_DESC: u16 = 512;
-const DEFAULT_RX_DESC: u16 = 512;
-const DEFAULT_RX_POOL_SIZE: usize = 4096;
-const DEFAULT_RX_PER_CORE_CACHE: usize = 64;
+const DEFAULT_TX_DESC: u16 = 128;
+const DEFAULT_RX_DESC: u16 = 128;
+const DEFAULT_RX_POOL_SIZE: usize = 1024;
+const DEFAULT_RX_PER_CORE_CACHE: usize = 0;
+const DEFAULT_PACKET_DATA_LENGTH: usize = 2048;
+const DEFAULT_PROMISC: bool = true;
 
 #[derive(Debug)]
 struct EalSharedInner {} // TODO Remove this if unnecessary
@@ -193,7 +195,11 @@ impl Eal {
     ///
     /// Note: rte_lcore_count: -c ff 옵션에 따라 줄어듬.
     #[inline]
-    pub fn setup(&self, rx_affinity: Affinity, tx_affinity: Affinity) {
+    pub fn setup(
+        &self,
+        rx_affinity: Affinity,
+        tx_affinity: Affinity,
+    ) -> Vec<(u32, Vec<RxQ>, Vec<TxQ>)> {
         // List of valid logical core ids.
         // Note: If some cores are masked, range (0..rte_lcore_count()) will include disabled cores.
         let lcore_id_list = (0..dpdk_sys::RTE_MAX_LCORE)
@@ -343,49 +349,134 @@ impl Eal {
             });
 
         // Configure RX queues
-        let ret: Vec<_> = configured_port_socket_rx_tx_pairs
-            .map(|(port, dev_info, port_socket_id, rx_cpus, tx_cpus)| {
+        let with_rxqs = configured_port_socket_rx_tx_pairs.map(
+            |(port, dev_info, port_socket_id, rx_cpus, tx_cpus)| {
                 let port_id = port.inner.port_id;
 
-                let cpu_rxq_list = rx_cpus.iter().enumerate().map(|(rxq_idx, rx_cpu)| {
-                    // Create MPool for RX
-                    let pool_name = format!("rxq_{}_{}_{}", MAGIC, port_id, rxq_idx);
-                    let mpool = MPool::new(
-                        self,
-                        pool_name,
-                        DEFAULT_RX_POOL_SIZE,
-                        DEFAULT_RX_PER_CORE_CACHE,
-                        2048,
-                        port_socket_id,
-                    );
-                    let ret = unsafe {
-                        dpdk_sys::rte_eth_rx_queue_setup(
-                            port_id,
-                            rxq_idx as u16,
-                            DEFAULT_RX_DESC,
-                            port_socket_id as u32,
-                            &dev_info.default_rxconf,
-                            mpool.inner.ptr.as_ptr(),
-                        )
-                    };
-                    assert_eq!(ret, 0);
+                let cpu_rxq_list = rx_cpus
+                    .iter()
+                    .enumerate()
+                    .map(|(rxq_idx, rx_cpu)| {
+                        // Create MPool for RX
+                        let pool_name = format!("rxq_{}_{}_{}", MAGIC, port_id, rxq_idx);
+                        let mpool = MPool::new(
+                            self,
+                            pool_name,
+                            DEFAULT_RX_POOL_SIZE,
+                            DEFAULT_RX_PER_CORE_CACHE,
+                            DEFAULT_PACKET_DATA_LENGTH,
+                            port_socket_id,
+                        );
+                        let ret = unsafe {
+                            dpdk_sys::rte_eth_rx_queue_setup(
+                                port_id,
+                                rxq_idx as u16,
+                                DEFAULT_RX_DESC,
+                                port_socket_id as u32,
+                                &dev_info.default_rxconf,
+                                mpool.inner.ptr.as_ptr(),
+                            )
+                        };
+                        assert_eq!(ret, 0);
 
-                    (
-                        rx_cpu,
-                        RxQ {
-                            inner: Arc::new(RxQInner {
-                                queue_id: rxq_idx as u16,
-                                port_ref: port.inner.clone(),
-                                mpool_ref: mpool.inner,
-                            }),
-                        },
-                    )
-                });
+                        (
+                            *rx_cpu,
+                            RxQ {
+                                inner: Arc::new(RxQInner {
+                                    queue_id: rxq_idx as u16,
+                                    port_ref: port.inner.clone(),
+                                    mpool_ref: mpool.inner,
+                                }),
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                (port, dev_info, port_socket_id, cpu_rxq_list, tx_cpus)
+            },
+        );
+
+        // Configure TX queues
+        let with_rxtxqs: Vec<_> = with_rxqs
+            .map(|(port, dev_info, port_socket_id, cpu_rxq_list, tx_cpus)| {
+                let port_id = port.inner.port_id;
+
+                let cpu_txq_list = tx_cpus
+                    .iter()
+                    .enumerate()
+                    .map(|(txq_idx, tx_cpu)| {
+                        let ret = unsafe {
+                            dpdk_sys::rte_eth_tx_queue_setup(
+                                port_id,
+                                txq_idx as u16,
+                                DEFAULT_RX_DESC,
+                                port_socket_id as u32,
+                                &dev_info.default_txconf,
+                            )
+                        };
+                        assert_eq!(ret, 0);
+
+                        (
+                            *tx_cpu,
+                            TxQ {
+                                inner: Arc::new(TxQInner {
+                                    queue_id: txq_idx as u16,
+                                    port_ref: port.inner.clone(),
+                                }),
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                //
+                (port, dev_info, port_socket_id, cpu_rxq_list, cpu_txq_list)
             })
             .collect();
 
-        // TODO Doing here
-        panic!("Not implemented");
+        // Sort via lcore ids.
+        let lcore_to_rxtx_map = with_rxtxqs.into_iter().fold(
+            HashMap::new(),
+            |mut lcore_to_rxtx_map, (port, _, _, cpu_rxq_list, cpu_txq_list)| {
+                let port_id = port.inner.port_id;
+
+                // Set promisc.
+                // Safety: foreign function.
+                unsafe {
+                    if DEFAULT_PROMISC {
+                        dpdk_sys::rte_eth_promiscuous_enable(port_id);
+                    } else {
+                        dpdk_sys::rte_eth_promiscuous_disable(port_id);
+                    }
+                };
+
+                // Start port.
+                // Safety: foreign function.
+                let ret = unsafe { dpdk_sys::rte_eth_dev_start(port_id) };
+                assert_eq!(ret, 0);
+
+                cpu_rxq_list.into_iter().for_each(|(lcore_id, rxq)| {
+                    lcore_to_rxtx_map
+                        .entry(lcore_id)
+                        .or_insert_with(|| (Vec::new(), Vec::new()))
+                        .0
+                        .push(rxq);
+                });
+                cpu_txq_list.into_iter().for_each(|(lcore_id, txq)| {
+                    lcore_to_rxtx_map
+                        .entry(lcore_id)
+                        .or_insert_with(|| (Vec::new(), Vec::new()))
+                        .1
+                        .push(txq);
+                });
+
+                lcore_to_rxtx_map
+            },
+        );
+
+        // Return array of `(LCore, Vec<RxQ>, Vec<TxQ>)`.
+        lcore_to_rxtx_map
+            .into_iter()
+            .map(|(lcore_id, (rxqs, txqs))| (lcore_id, rxqs, txqs))
+            .collect()
     }
 }
 
