@@ -55,10 +55,8 @@ pub struct Port {
 #[derive(Debug)]
 struct PortInner {
     port_id: u16,
-    eal: Eal,
+    eal_ref: Arc<EalInner>,
 }
-
-impl Port {}
 
 /// Placeholder for DPDK Pool's private data
 #[derive(Debug)]
@@ -160,7 +158,8 @@ pub struct RxQ {
 #[derive(Debug)]
 struct RxQInner {
     queue_id: u16,
-    port: Port,
+    port_ref: Arc<PortInner>,
+    mpool_ref: Arc<MPoolInner>,
 }
 
 impl RxQ {}
@@ -174,7 +173,7 @@ pub struct TxQ {
 #[derive(Debug)]
 struct TxQInner {
     queue_id: u16,
-    port: Port,
+    port_ref: Arc<PortInner>,
 }
 
 impl TxQ {}
@@ -265,7 +264,7 @@ impl Eal {
                 Port {
                     inner: Arc::new(PortInner {
                         port_id,
-                        eal: self.clone(),
+                        eal_ref: self.inner.clone(),
                     }),
                 },
                 port_socket_id,
@@ -275,8 +274,8 @@ impl Eal {
         });
 
         // Init each port
-        let ret: Vec<_> = port_socket_rx_tx_pairs
-            .map(|(port, port_socket_id, rx_cpus, tx_cpus)| {
+        let configured_port_socket_rx_tx_pairs =
+            port_socket_rx_tx_pairs.map(|(port, port_socket_id, rx_cpus, tx_cpus)| {
                 let port_id = port.inner.port_id;
                 // Safety: `rte_eth_dev_info` contains primitive integer types. Safe to fill with zeros.
                 let mut dev_info: dpdk_sys::rte_eth_dev_info = unsafe { std::mem::zeroed() };
@@ -339,7 +338,14 @@ impl Eal {
                         &port_conf,
                     )
                 };
-                assert!(ret == 0);
+                assert_eq!(ret, 0);
+                (port, dev_info, port_socket_id, rx_cpus, tx_cpus)
+            });
+
+        // Configure RX queues
+        let ret: Vec<_> = configured_port_socket_rx_tx_pairs
+            .map(|(port, dev_info, port_socket_id, rx_cpus, tx_cpus)| {
+                let port_id = port.inner.port_id;
 
                 let cpu_rxq_list = rx_cpus.iter().enumerate().map(|(rxq_idx, rx_cpu)| {
                     // Create MPool for RX
@@ -369,7 +375,8 @@ impl Eal {
                         RxQ {
                             inner: Arc::new(RxQInner {
                                 queue_id: rxq_idx as u16,
-                                port: port.clone(),
+                                port_ref: port.inner.clone(),
+                                mpool_ref: mpool.inner,
                             }),
                         },
                     )
