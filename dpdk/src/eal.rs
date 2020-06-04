@@ -4,7 +4,6 @@ use log::{debug, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
-use std::mem::size_of;
 use std::ptr::NonNull;
 use std::sync::{Arc, RwLock};
 use thiserror::Error;
@@ -15,6 +14,7 @@ const DEFAULT_TX_DESC: u16 = 128;
 const DEFAULT_RX_DESC: u16 = 128;
 const DEFAULT_RX_POOL_SIZE: usize = 1024;
 const DEFAULT_RX_PER_CORE_CACHE: usize = 0;
+const DEFAULT_MBUF_PRIV_SIZE: usize = 0;
 const DEFAULT_PACKET_DATA_LENGTH: usize = 2048;
 const DEFAULT_PROMISC: bool = true;
 
@@ -72,7 +72,7 @@ pub struct MPool {
 
 #[derive(Debug)]
 struct MPoolInner {
-    eal: Eal,
+    eal_ref: Arc<EalInner>,
     ptr: NonNull<dpdk_sys::rte_mempool>,
 }
 
@@ -91,27 +91,41 @@ impl Drop for MPoolInner {
 }
 
 impl MPool {
-    /// Create a new `MPool`.
-    /// Note: Pool name must be globally unique.
+    /// Create a new `MPool`.  Note: Pool name must be globally unique.
+    ///
+    /// @param n The number of elements in the mbuf pool.
+    ///
+    /// @param cache_size Size of the per-core object cache.
+    ///
+    /// @param priv_size Size of application private are between the rte_mbuf structure and the data
+    /// buffer. This value must be aligned to RTE_MBUF_PRIV_ALIGN.
+    ///
+    /// @param data_room_size Size of data buffer in each mbuf, including RTE_PKTMBUF_HEADROOM.
+    ///
+    /// @param socket_id The socket identifier where the memory should be allocated. The value can
+    /// be *SOCKET_ID_ANY* if there is no NUMA constraint for the reserved zone.
     #[inline]
-    pub fn new<StringLike: Into<Vec<u8>>>(
+    pub fn new<S: AsRef<str>>(
         eal: &Eal,
-        name: StringLike,
-        size: usize,
-        per_core_cache_size: usize,
-        data_len: usize,
+        name: S,
+        n: usize,
+        cache_size: usize,
+        priv_size: usize,
+        data_room_size: usize,
         socket_id: i32,
     ) -> Self {
-        let pool_name = CString::new(name).unwrap();
+        let pool_name = CString::new(name.as_ref()).unwrap();
 
         // Safety: foreign function.
+        // Note: if we need additional metadata (priv_data),
+        // assign `(((size_of::<MPoolPriv>() + 7) / 8) * 8) as u16` instead of `0`.
         let ptr = unsafe {
             dpdk_sys::rte_pktmbuf_pool_create(
                 pool_name.into_bytes_with_nul().as_ptr() as *mut i8,
-                size.try_into().unwrap(),
-                per_core_cache_size as u32,
-                (((size_of::<MPoolPriv>() + 7) / 8) * 8) as u16,
-                data_len.try_into().unwrap(),
+                n.try_into().unwrap(),
+                cache_size as u32,
+                priv_size.try_into().unwrap(),
+                data_room_size.try_into().unwrap(),
                 socket_id,
             )
         };
@@ -119,22 +133,25 @@ impl MPool {
         // https://doc.dpdk.org/api/rte__mbuf_8h.html
         MPool {
             inner: Arc::new(MPoolInner {
-                eal: eal.clone(),
+                eal_ref: eal.inner.clone(),
                 ptr: NonNull::new(ptr).unwrap(),
             }),
         }
     }
 
     /// Allocate a `Packet` from the pool.
+    ///
     /// # Safety
     /// Returned item must not outlive this pool.
     #[inline]
-    pub unsafe fn allloc(&self) -> Option<Packet> {
+    pub unsafe fn alloc(&self) -> Option<Packet> {
         // Safety: foreign function.
         // `alloc` is temporarily unsafe. Leaving this unsafe block.
         let pkt_ptr = unsafe { dpdk_sys::rte_pktmbuf_alloc(self.inner.ptr.as_ptr()) };
 
-        NonNull::new(pkt_ptr).map(|ptr| Packet { ptr })
+        Some(Packet {
+            ptr: NonNull::new(pkt_ptr)?,
+        })
     }
 }
 
@@ -203,17 +220,19 @@ impl Eal {
         // List of valid logical core ids.
         // Note: If some cores are masked, range (0..rte_lcore_count()) will include disabled cores.
         let lcore_id_list = (0..dpdk_sys::RTE_MAX_LCORE)
-            .filter(|index| unsafe { dpdk_sys::rte_lcore_is_enabled(*index) > 0 });
+            .filter(|index| unsafe { dpdk_sys::rte_lcore_is_enabled(*index) > 0 })
+            .collect::<Vec<_>>();
 
         // List of `(lcore_id, socket_id)` pairs.
         let lcore_socket_pair_list: Vec<_> = lcore_id_list
-            .clone()
+            .iter()
             .map(|lcore_id| {
                 // Safety: foreign function.
                 let lcore_socket_id =
-                    unsafe { dpdk_sys::rte_lcore_to_socket_id(lcore_id.try_into().unwrap()) };
-                let cpu_id = unsafe { dpdk_sys::rte_lcore_to_cpu_id(lcore_id.try_into().unwrap()) };
-                let is_enabled = unsafe { dpdk_sys::rte_lcore_is_enabled(lcore_id) > 0 };
+                    unsafe { dpdk_sys::rte_lcore_to_socket_id((*lcore_id).try_into().unwrap()) };
+                let cpu_id =
+                    unsafe { dpdk_sys::rte_lcore_to_cpu_id((*lcore_id).try_into().unwrap()) };
+                let is_enabled = unsafe { dpdk_sys::rte_lcore_is_enabled(*lcore_id) > 0 };
                 assert!(is_enabled);
                 debug!(
                     "Logical core {} is enabled at physical core {} (NUMA node {})",
@@ -224,15 +243,14 @@ impl Eal {
             .collect();
         println!("lcore count: {}", lcore_socket_pair_list.len());
 
-        // Sort lcore ids with map
-        let socket_to_lcore_map = lcore_socket_pair_list.iter().fold(
+        // Map of `socket_id` to set of `lcore_id`s belong to the socket.
+        let socket_to_lcore_map = lcore_socket_pair_list.clone().into_iter().fold(
             HashMap::new(),
-            |mut sort_by_socket, (lcore_id, socket_id)| {
-                sort_by_socket
-                    .entry(socket_id)
+            |mut s, (lcore_id, socket_id)| {
+                s.entry(socket_id)
                     .or_insert_with(HashSet::new)
-                    .insert(lcore_id);
-                sort_by_socket
+                    .insert(*lcore_id);
+                s
             },
         );
 
@@ -247,22 +265,20 @@ impl Eal {
             // Safety: foreign function.
             let port_socket_id = unsafe { dpdk_sys::rte_eth_dev_socket_id(port_id) };
             let rx_lcore_for_this_port: Vec<_> = match rx_affinity {
-                Affinity::Full => lcore_id_list.clone().collect(),
+                Affinity::Full => lcore_id_list.clone(),
                 Affinity::Numa => socket_to_lcore_map
                     .get(&(port_socket_id as u32))
                     .unwrap()
                     .iter()
-                    .cloned()
                     .cloned()
                     .collect(),
             };
             let tx_lcore_for_this_port: Vec<_> = match tx_affinity {
-                Affinity::Full => lcore_id_list.clone().collect(),
+                Affinity::Full => lcore_id_list.clone(),
                 Affinity::Numa => socket_to_lcore_map
                     .get(&(port_socket_id as u32))
                     .unwrap()
                     .iter()
-                    .cloned()
                     .cloned()
                     .collect(),
             };
@@ -363,6 +379,7 @@ impl Eal {
                             self,
                             pool_name,
                             DEFAULT_RX_POOL_SIZE,
+                            DEFAULT_MBUF_PRIV_SIZE,
                             DEFAULT_RX_PER_CORE_CACHE,
                             DEFAULT_PACKET_DATA_LENGTH,
                             port_socket_id,
@@ -522,6 +539,7 @@ impl Drop for EalInner {
     }
 }
 
+/// TODO Sync with DPDK/C error codes when updated.
 pub enum EalErrorCode {
     EPERM = -1,
     ENOENT = -2,
