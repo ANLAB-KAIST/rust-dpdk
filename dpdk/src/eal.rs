@@ -54,6 +54,24 @@ pub struct Port {
     inner: Arc<PortInner>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct LCoreId(u32);
+
+#[derive(Debug, Clone, Copy)]
+pub struct NumaNode(u32);
+
+impl Port {
+    /// Returns NUMA node of current port.
+    #[inline]
+    pub fn numa_node(&self) -> NumaNode {
+        NumaNode(unsafe {
+            dpdk_sys::rte_eth_dev_socket_id(self.inner.port_id)
+                .try_into()
+                .unwrap()
+        })
+    }
+}
+
 #[derive(Debug)]
 struct PortInner {
     port_id: u16,
@@ -207,12 +225,14 @@ impl Eal {
     /// Candidate 1, return (thread, rxqs, txqs)
     ///
     /// Note: rte_lcore_count: -c ff 옵션에 따라 줄어듬.
+    ///
+    /// Returns array of `(logical core id, assigned rx queues, assigned tx queues)`.
     #[inline]
     pub fn setup(
         &self,
         rx_affinity: Affinity,
         tx_affinity: Affinity,
-    ) -> Vec<(u32, Vec<RxQ>, Vec<TxQ>)> {
+    ) -> Vec<(LCoreId, Vec<RxQ>, Vec<TxQ>)> {
         // List of valid logical core ids.
         // Note: If some cores are masked, range (0..rte_lcore_count()) will include disabled cores.
         let lcore_id_list = (0..dpdk_sys::RTE_MAX_LCORE)
@@ -237,7 +257,7 @@ impl Eal {
                 (lcore_id, lcore_socket_id)
             })
             .collect();
-        println!("lcore count: {}", lcore_socket_pair_list.len());
+        debug!("lcore count: {}", lcore_socket_pair_list.len());
 
         // Map of `socket_id` to set of `lcore_id`s belong to the socket.
         let socket_to_lcore_map = lcore_socket_pair_list.clone().into_iter().fold(
@@ -360,7 +380,7 @@ impl Eal {
                 (port, dev_info, port_socket_id, rx_cpus, tx_cpus)
             });
 
-        // Configure RX queues
+        // Ports with configured RX queues
         let port_configure_socket_rxq_tx_pairs = port_configure_socket_rx_tx_pairs.map(
             |(port, dev_info, port_socket_id, rx_cpus, tx_cpus)| {
                 let port_id = port.inner.port_id;
@@ -408,7 +428,7 @@ impl Eal {
             },
         );
 
-        // Configure TX queues
+        // Ports with configured TX queues, along with previously configured RX queues.
         let port_configure_socket_rxq_txq_pairs: Vec<_> = port_configure_socket_rxq_tx_pairs
             .map(|(port, dev_info, port_socket_id, cpu_rxq_list, tx_cpus)| {
                 let port_id = port.inner.port_id;
@@ -445,7 +465,7 @@ impl Eal {
             })
             .collect();
 
-        // Sort via lcore ids.
+        // Map from `lcore_id` to its assigned `(rxq, txq)`.
         let lcore_to_rxqtxq_map = port_configure_socket_rxq_txq_pairs.into_iter().fold(
             HashMap::new(),
             |mut m, (port, _, _, cpu_rxq_list, cpu_txq_list)| {
@@ -486,7 +506,7 @@ impl Eal {
         // Return array of `(LCore, Vec<RxQ>, Vec<TxQ>)`.
         lcore_to_rxqtxq_map
             .into_iter()
-            .map(|(lcore_id, (rxqs, txqs))| (lcore_id, rxqs, txqs))
+            .map(|(lcore_id, (rxqs, txqs))| (LCoreId(lcore_id), rxqs, txqs))
             .collect()
     }
 }
