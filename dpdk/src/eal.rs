@@ -273,7 +273,6 @@ impl Eal {
         // Safety: foreign function.
         let port_id_list = (0..u16::try_from(dpdk_sys::RTE_MAX_ETHPORTS).unwrap())
             .filter(|index| unsafe { dpdk_sys::rte_eth_dev_is_valid_port(*index) > 0 });
-        println!("port_id_list {:?}", port_id_list);
 
         // List of `(port, port_socket_id, vec<rx_lcore_ids>, vec<tx_lcore_ids>)`.
         // Note: We need number of rx cores and tx cores at the same time (`rte_eth_dev_configure`)
