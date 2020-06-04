@@ -57,12 +57,8 @@ pub struct Port {
 #[derive(Debug)]
 struct PortInner {
     port_id: u16,
-    eal_ref: Arc<EalInner>,
+    eal: Arc<EalInner>,
 }
-
-/// Placeholder for DPDK Pool's private data
-#[derive(Debug)]
-pub struct MPoolPriv {}
 
 /// Abstract type for DPDK MPool
 #[derive(Debug, Clone)]
@@ -72,7 +68,7 @@ pub struct MPool {
 
 #[derive(Debug)]
 struct MPoolInner {
-    eal_ref: Arc<EalInner>,
+    eal: Arc<EalInner>,
     ptr: NonNull<dpdk_sys::rte_mempool>,
 }
 
@@ -86,7 +82,7 @@ impl Drop for MPoolInner {
     #[inline]
     fn drop(&mut self) {
         // Safety: foreign function.
-        unsafe { dpdk_sys::rte_mempool_free(self.ptr.as_ptr()) }
+        unsafe { dpdk_sys::rte_mempool_free(self.ptr.as_ptr()) };
     }
 }
 
@@ -133,7 +129,7 @@ impl MPool {
         // https://doc.dpdk.org/api/rte__mbuf_8h.html
         MPool {
             inner: Arc::new(MPoolInner {
-                eal_ref: eal.inner.clone(),
+                eal: eal.inner.clone(),
                 ptr: NonNull::new(ptr).unwrap(),
             }),
         }
@@ -177,8 +173,8 @@ pub struct RxQ {
 #[derive(Debug)]
 struct RxQInner {
     queue_id: u16,
-    port_ref: Arc<PortInner>,
-    mpool_ref: Arc<MPoolInner>,
+    port: Arc<PortInner>,
+    mpool: Arc<MPoolInner>,
 }
 
 impl RxQ {}
@@ -192,7 +188,7 @@ pub struct TxQ {
 #[derive(Debug)]
 struct TxQInner {
     queue_id: u16,
-    port_ref: Arc<PortInner>,
+    port: Arc<PortInner>,
 }
 
 impl TxQ {}
@@ -264,7 +260,7 @@ impl Eal {
         let port_socket_rx_tx_pairs = port_id_list.clone().map(|port_id| {
             // Safety: foreign function.
             let port_socket_id = unsafe { dpdk_sys::rte_eth_dev_socket_id(port_id) };
-            let rx_lcore_for_this_port: Vec<_> = match rx_affinity {
+            let rx_cpus: Vec<_> = match rx_affinity {
                 Affinity::Full => lcore_id_list.clone(),
                 Affinity::Numa => socket_to_lcore_map
                     .get(&(port_socket_id as u32))
@@ -273,7 +269,7 @@ impl Eal {
                     .cloned()
                     .collect(),
             };
-            let tx_lcore_for_this_port: Vec<_> = match tx_affinity {
+            let tx_cpus: Vec<_> = match tx_affinity {
                 Affinity::Full => lcore_id_list.clone(),
                 Affinity::Numa => socket_to_lcore_map
                     .get(&(port_socket_id as u32))
@@ -286,17 +282,17 @@ impl Eal {
                 Port {
                     inner: Arc::new(PortInner {
                         port_id,
-                        eal_ref: self.inner.clone(),
+                        eal: self.inner.clone(),
                     }),
                 },
                 port_socket_id,
-                rx_lcore_for_this_port,
-                tx_lcore_for_this_port,
+                rx_cpus,
+                tx_cpus,
             )
         });
 
         // Init each port
-        let configured_port_socket_rx_tx_pairs =
+        let port_configure_socket_rx_tx_pairs =
             port_socket_rx_tx_pairs.map(|(port, port_socket_id, rx_cpus, tx_cpus)| {
                 let port_id = port.inner.port_id;
                 // Safety: `rte_eth_dev_info` contains primitive integer types. Safe to fill with zeros.
@@ -365,7 +361,7 @@ impl Eal {
             });
 
         // Configure RX queues
-        let with_rxqs = configured_port_socket_rx_tx_pairs.map(
+        let port_configure_socket_rxq_tx_pairs = port_configure_socket_rx_tx_pairs.map(
             |(port, dev_info, port_socket_id, rx_cpus, tx_cpus)| {
                 let port_id = port.inner.port_id;
 
@@ -401,8 +397,8 @@ impl Eal {
                             RxQ {
                                 inner: Arc::new(RxQInner {
                                     queue_id: rxq_idx as u16,
-                                    port_ref: port.inner.clone(),
-                                    mpool_ref: mpool.inner,
+                                    port: port.inner.clone(),
+                                    mpool: mpool.inner,
                                 }),
                             },
                         )
@@ -413,7 +409,7 @@ impl Eal {
         );
 
         // Configure TX queues
-        let with_rxtxqs: Vec<_> = with_rxqs
+        let port_configure_socket_rxq_txq_pairs: Vec<_> = port_configure_socket_rxq_tx_pairs
             .map(|(port, dev_info, port_socket_id, cpu_rxq_list, tx_cpus)| {
                 let port_id = port.inner.port_id;
 
@@ -437,7 +433,7 @@ impl Eal {
                             TxQ {
                                 inner: Arc::new(TxQInner {
                                     queue_id: txq_idx as u16,
-                                    port_ref: port.inner.clone(),
+                                    port: port.inner.clone(),
                                 }),
                             },
                         )
@@ -450,9 +446,9 @@ impl Eal {
             .collect();
 
         // Sort via lcore ids.
-        let lcore_to_rxtx_map = with_rxtxqs.into_iter().fold(
+        let lcore_to_rxqtxq_map = port_configure_socket_rxq_txq_pairs.into_iter().fold(
             HashMap::new(),
-            |mut lcore_to_rxtx_map, (port, _, _, cpu_rxq_list, cpu_txq_list)| {
+            |mut m, (port, _, _, cpu_rxq_list, cpu_txq_list)| {
                 let port_id = port.inner.port_id;
 
                 // Set promisc.
@@ -471,26 +467,24 @@ impl Eal {
                 assert_eq!(ret, 0);
 
                 cpu_rxq_list.into_iter().for_each(|(lcore_id, rxq)| {
-                    lcore_to_rxtx_map
-                        .entry(lcore_id)
+                    m.entry(lcore_id)
                         .or_insert_with(|| (Vec::new(), Vec::new()))
                         .0
                         .push(rxq);
                 });
                 cpu_txq_list.into_iter().for_each(|(lcore_id, txq)| {
-                    lcore_to_rxtx_map
-                        .entry(lcore_id)
+                    m.entry(lcore_id)
                         .or_insert_with(|| (Vec::new(), Vec::new()))
                         .1
                         .push(txq);
                 });
 
-                lcore_to_rxtx_map
+                m
             },
         );
 
         // Return array of `(LCore, Vec<RxQ>, Vec<TxQ>)`.
-        lcore_to_rxtx_map
+        lcore_to_rxqtxq_map
             .into_iter()
             .map(|(lcore_id, (rxqs, txqs))| (lcore_id, rxqs, txqs))
             .collect()
