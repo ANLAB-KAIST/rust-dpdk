@@ -19,7 +19,18 @@ const DEFAULT_PACKET_DATA_LENGTH: usize = 2048;
 const DEFAULT_PROMISC: bool = true;
 
 #[derive(Debug)]
-struct EalSharedInner {} // TODO Remove this if unnecessary
+struct EalSharedInner {
+    setup_handle: bool,
+} // TODO Remove this if unnecessary
+
+impl Default for EalSharedInner {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            setup_handle: false,
+        }
+    }
+}
 
 #[derive(Debug)]
 struct EalInner {
@@ -52,19 +63,72 @@ pub enum Affinity {
 #[derive(Debug, Clone)]
 pub struct Port {
     inner: Arc<PortInner>,
+    eal: Arc<EalInner>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct LCoreId(u32);
 
+impl Into<u32> for LCoreId {
+    #[inline]
+    fn into(self) -> u32 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
-pub struct NumaNode(u32);
+pub struct SocketId(u32);
+
+impl Into<u32> for SocketId {
+    #[inline]
+    fn into(self) -> u32 {
+        self.0
+    }
+}
+
+impl SocketId {
+    #[inline]
+    fn new(id: u32) -> Self {
+        Self(id)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ErrorCode(u8);
+
+impl Into<u8> for ErrorCode {
+    #[inline]
+    fn into(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<u8> for ErrorCode {
+    #[inline]
+    fn from(id: u8) -> Self {
+        Self(id)
+    }
+}
+impl TryFrom<u32> for ErrorCode {
+    type Error = <u8 as TryFrom<u32>>::Error;
+    #[inline]
+    fn try_from(id: u32) -> Result<Self, Self::Error> {
+        Ok(Self(id.try_into()?))
+    }
+}
+impl TryFrom<i32> for ErrorCode {
+    type Error = <u8 as TryFrom<i32>>::Error;
+    #[inline]
+    fn try_from(id: i32) -> Result<Self, Self::Error> {
+        Ok(Self((-id).try_into()?))
+    }
+}
 
 impl Port {
     /// Returns NUMA node of current port.
     #[inline]
-    pub fn numa_node(&self) -> NumaNode {
-        NumaNode(unsafe {
+    pub fn socket_id(&self) -> SocketId {
+        SocketId::new(unsafe {
             dpdk_sys::rte_eth_dev_socket_id(self.inner.port_id)
                 .try_into()
                 .unwrap()
@@ -75,18 +139,17 @@ impl Port {
 #[derive(Debug)]
 struct PortInner {
     port_id: u16,
-    eal: Arc<EalInner>,
 }
 
 /// Abstract type for DPDK MPool
 #[derive(Debug, Clone)]
 pub struct MPool {
     inner: Arc<MPoolInner>,
+    eal: Arc<EalInner>,
 }
 
 #[derive(Debug)]
 struct MPoolInner {
-    eal: Arc<EalInner>,
     ptr: NonNull<dpdk_sys::rte_mempool>,
 }
 
@@ -117,7 +180,7 @@ impl MPool {
     /// @param data_room_size Size of data buffer in each mbuf, including RTE_PKTMBUF_HEADROOM.
     ///
     /// @param socket_id The socket identifier where the memory should be allocated. The value can
-    /// be *SOCKET_ID_ANY* if there is no NUMA constraint for the reserved zone.
+    /// be `None` (corresponds to DPDK's *SOCKET_ID_ANY*) if there is no NUMA constraint for the reserved zone.
     #[inline]
     pub fn new<S: AsRef<str>>(
         eal: &Eal,
@@ -126,7 +189,7 @@ impl MPool {
         cache_size: usize,
         priv_size: usize,
         data_room_size: usize,
-        socket_id: i32,
+        socket_id: Option<SocketId>,
     ) -> Self {
         let pool_name = CString::new(name.as_ref()).unwrap();
 
@@ -140,22 +203,23 @@ impl MPool {
                 cache_size as u32,
                 priv_size.try_into().unwrap(),
                 data_room_size.try_into().unwrap(),
-                socket_id,
+                socket_id.map(|x| x.0 as i32).unwrap_or(dpdk_sys::SOCKET_ID_ANY),
             )
         };
         // The pointer to the new allocated mempool, on success. NULL on error with rte_errno set appropriately.
         // https://doc.dpdk.org/api/rte__mbuf_8h.html
         MPool {
             inner: Arc::new(MPoolInner {
-                eal: eal.inner.clone(),
                 ptr: NonNull::new(ptr).unwrap(),
             }),
+            eal: eal.inner.clone(),
         }
     }
 
     /// Allocate a `Packet` from the pool.
     ///
     /// # Safety
+    /// 
     /// Returned item must not outlive this pool.
     #[inline]
     pub unsafe fn alloc(&self) -> Option<Packet> {
@@ -178,7 +242,7 @@ impl Drop for Packet {
     #[inline]
     fn drop(&mut self) {
         // Safety: foreign function.
-        unsafe { dpdk_sys::rte_pktmbuf_free(self.ptr.as_ptr()) }
+        unsafe { dpdk_sys::rte_pktmbuf_free(self.ptr.as_ptr()); }
     }
 }
 
@@ -186,13 +250,13 @@ impl Drop for Packet {
 #[derive(Debug, Clone)]
 pub struct RxQ {
     inner: Arc<RxQInner>,
+    port: Arc<PortInner>,
+    mpool: Arc<MPoolInner>,
 }
 
 #[derive(Debug)]
 struct RxQInner {
     queue_id: u16,
-    port: Arc<PortInner>,
-    mpool: Arc<MPoolInner>,
 }
 
 impl RxQ {}
@@ -226,13 +290,19 @@ impl Eal {
     ///
     /// Note: rte_lcore_count: -c ff 옵션에 따라 줄어듬.
     ///
-    /// Returns array of `(logical core id, assigned rx queues, assigned tx queues)`.
+    /// Returns array of `(logical core id, assigned rx queues, assigned tx queues)` on success.
+    /// Otherwise, return `ErrorCode`.
     #[inline]
     pub fn setup(
         &self,
         rx_affinity: Affinity,
         tx_affinity: Affinity,
-    ) -> Vec<(LCoreId, Vec<RxQ>, Vec<TxQ>)> {
+    ) -> Result<Vec<(LCoreId, Vec<RxQ>, Vec<TxQ>)>, ErrorCode> {
+        let shared_mut = self.inner.shared.write().unwrap();
+        if shared_mut.setup_handle {
+            // Already initialized.
+            return Err(dpdk_sys::EALREADY.try_into().unwrap())
+        }
         // List of valid logical core ids.
         // Note: If some cores are masked, range (0..rte_lcore_count()) will include disabled cores.
         let lcore_id_list = (0..dpdk_sys::RTE_MAX_LCORE)
@@ -301,10 +371,10 @@ impl Eal {
                 Port {
                     inner: Arc::new(PortInner {
                         port_id,
-                        eal: self.inner.clone(),
+                        
                     }),
+                    eal: self.inner.clone(),
                 },
-                port_socket_id,
                 rx_cpus,
                 tx_cpus,
             )
@@ -312,7 +382,7 @@ impl Eal {
 
         // Init each port
         let port_configure_socket_rx_tx_pairs =
-            port_socket_rx_tx_pairs.map(|(port, port_socket_id, rx_cpus, tx_cpus)| {
+            port_socket_rx_tx_pairs.map(|(port, rx_cpus, tx_cpus)| {
                 let port_id = port.inner.port_id;
                 // Safety: `rte_eth_dev_info` contains primitive integer types. Safe to fill with zeros.
                 let mut dev_info: dpdk_sys::rte_eth_dev_info = unsafe { std::mem::zeroed() };
@@ -376,12 +446,12 @@ impl Eal {
                     )
                 };
                 assert_eq!(ret, 0);
-                (port, dev_info, port_socket_id, rx_cpus, tx_cpus)
+                (port, dev_info, rx_cpus, tx_cpus)
             });
 
         // Ports with configured RX queues
         let port_configure_socket_rxq_tx_pairs = port_configure_socket_rx_tx_pairs.map(
-            |(port, dev_info, port_socket_id, rx_cpus, tx_cpus)| {
+            |(port, dev_info, rx_cpus, tx_cpus)| {
                 let port_id = port.inner.port_id;
 
                 let cpu_rxq_list = rx_cpus
@@ -397,14 +467,14 @@ impl Eal {
                             DEFAULT_MBUF_PRIV_SIZE,
                             DEFAULT_RX_PER_CORE_CACHE,
                             DEFAULT_PACKET_DATA_LENGTH,
-                            port_socket_id,
+                            Some(port.socket_id()),
                         );
                         let ret = unsafe {
                             dpdk_sys::rte_eth_rx_queue_setup(
                                 port_id,
                                 rxq_idx as u16,
                                 DEFAULT_RX_DESC,
-                                port_socket_id as u32,
+                                port.socket_id().into(),
                                 &dev_info.default_rxconf,
                                 mpool.inner.ptr.as_ptr(),
                             )
@@ -416,20 +486,22 @@ impl Eal {
                             RxQ {
                                 inner: Arc::new(RxQInner {
                                     queue_id: rxq_idx as u16,
-                                    port: port.inner.clone(),
-                                    mpool: mpool.inner,
+                                    
+                                    
                                 }),
+                                port: port.inner.clone(),
+                                mpool: mpool.inner,
                             },
                         )
                     })
                     .collect::<Vec<_>>();
-                (port, dev_info, port_socket_id, cpu_rxq_list, tx_cpus)
+                (port, dev_info, cpu_rxq_list, tx_cpus)
             },
         );
 
         // Ports with configured TX queues, along with previously configured RX queues.
         let port_configure_socket_rxq_txq_pairs: Vec<_> = port_configure_socket_rxq_tx_pairs
-            .map(|(port, dev_info, port_socket_id, cpu_rxq_list, tx_cpus)| {
+            .map(|(port, dev_info, cpu_rxq_list, tx_cpus)| {
                 let port_id = port.inner.port_id;
 
                 let cpu_txq_list = tx_cpus
@@ -441,7 +513,7 @@ impl Eal {
                                 port_id,
                                 txq_idx as u16,
                                 DEFAULT_RX_DESC,
-                                port_socket_id as u32,
+                                port.socket_id().into(),
                                 &dev_info.default_txconf,
                             )
                         };
@@ -460,14 +532,14 @@ impl Eal {
                     .collect::<Vec<_>>();
 
                 //
-                (port, dev_info, port_socket_id, cpu_rxq_list, cpu_txq_list)
+                (port, dev_info, cpu_rxq_list, cpu_txq_list)
             })
             .collect();
 
         // Map from `lcore_id` to its assigned `(rxq, txq)`.
         let lcore_to_rxqtxq_map = port_configure_socket_rxq_txq_pairs.into_iter().fold(
             HashMap::new(),
-            |mut m, (port, _, _, cpu_rxq_list, cpu_txq_list)| {
+            |mut m, (port, _, cpu_rxq_list, cpu_txq_list)| {
                 let port_id = port.inner.port_id;
 
                 // Set promisc.
@@ -503,10 +575,10 @@ impl Eal {
         );
 
         // Return array of `(LCore, Vec<RxQ>, Vec<TxQ>)`.
-        lcore_to_rxqtxq_map
+        Ok(lcore_to_rxqtxq_map
             .into_iter()
             .map(|(lcore_id, (rxqs, txqs))| (LCoreId(lcore_id), rxqs, txqs))
-            .collect()
+            .collect())
     }
 }
 
@@ -532,7 +604,7 @@ impl EalInner {
         // Strip first n args and return the remaining
         args.drain(..ret as usize);
         Ok(EalInner {
-            shared: RwLock::new(EalSharedInner {}),
+            shared: RwLock::new(Default::default()),
         })
     }
 }
@@ -550,142 +622,4 @@ impl Drop for EalInner {
             assert_eq!(ret, 0);
         }
     }
-}
-
-/// TODO Sync with DPDK/C error codes when updated.
-pub enum EalErrorCode {
-    EPERM = -1,
-    ENOENT = -2,
-    ESRCH = -3,
-    EINTR = -4,
-    EIO = -5,
-    ENXIO = -6,
-    E2BIG = -7,
-    ENOEXEC = -8,
-    EBADF = -9,
-    ECHILD = -10,
-    EAGAIN = -11,
-    ENOMEM = -12,
-    EACCES = -13,
-    EFAULT = -14,
-    ENOTBLK = -15,
-    EBUSY = -16,
-    EEXIST = -17,
-    EXDEV = -18,
-    ENODEV = -19,
-    ENOTDIR = -20,
-    EISDIR = -21,
-    EINVAL = -22,
-    ENFILE = -23,
-    EMFILE = -24,
-    ENOTTY = -25,
-    ETXTBSY = -26,
-    EFBIG = -27,
-    ENOSPC = -28,
-    ESPIPE = -29,
-    EROFS = -30,
-    EMLINK = -31,
-    EPIPE = -32,
-    EDOM = -33,
-    ERANGE = -34,
-    //EDEADLK = -35, Dup to EDEADLOCK
-    ENAMETOOLONG = -36,
-    ENOLCK = -37,
-    ENOSYS = -38,
-    ENOTEMPTY = -39,
-    ELOOP = -40,
-    //EWOULDBLOCK = -11, Dup to EAGAIN
-    ENOMSG = -42,
-    EIDRM = -43,
-    ECHRNG = -44,
-    EL2NSYNC = -45,
-    EL3HLT = -46,
-    EL3RST = -47,
-    ELNRNG = -48,
-    EUNATCH = -49,
-    ENOCSI = -50,
-    EL2HLT = -51,
-    EBADE = -52,
-    EBADR = -53,
-    EXFULL = -54,
-    ENOANO = -55,
-    EBADRQC = -56,
-    EBADSLT = -57,
-    EDEADLOCK = -35,
-    EBFONT = -59,
-    ENOSTR = -60,
-    ENODATA = -61,
-    ETIME = -62,
-    ENOSR = -63,
-    ENONET = -64,
-    ENOPKG = -65,
-    EREMOTE = -66,
-    ENOLINK = -67,
-    EADV = -68,
-    ESRMNT = -69,
-    ECOMM = -70,
-    EPROTO = -71,
-    EMULTIHOP = -72,
-    EDOTDOT = -73,
-    EBADMSG = -74,
-    EOVERFLOW = -75,
-    ENOTUNIQ = -76,
-    EBADFD = -77,
-    EREMCHG = -78,
-    ELIBACC = -79,
-    ELIBBAD = -80,
-    ELIBSCN = -81,
-    ELIBMAX = -82,
-    ELIBEXEC = -83,
-    EILSEQ = -84,
-    ERESTART = -85,
-    ESTRPIPE = -86,
-    EUSERS = -87,
-    ENOTSOCK = -88,
-    EDESTADDRREQ = -89,
-    EMSGSIZE = -90,
-    EPROTOTYPE = -91,
-    ENOPROTOOPT = -92,
-    EPROTONOSUPPORT = -93,
-    ESOCKTNOSUPPORT = -94,
-    //EOPNOTSUPP = -95, Dup to ENOTSUP
-    EPFNOSUPPORT = -96,
-    EAFNOSUPPORT = -97,
-    EADDRINUSE = -98,
-    EADDRNOTAVAIL = -99,
-    ENETDOWN = -100,
-    ENETUNREACH = -101,
-    ENETRESET = -102,
-    ECONNABORTED = -103,
-    ECONNRESET = -104,
-    ENOBUFS = -105,
-    EISCONN = -106,
-    ENOTCONN = -107,
-    ESHUTDOWN = -108,
-    ETOOMANYREFS = -109,
-    ETIMEDOUT = -110,
-    ECONNREFUSED = -111,
-    EHOSTDOWN = -112,
-    EHOSTUNREACH = -113,
-    EALREADY = -114,
-    EINPROGRESS = -115,
-    ESTALE = -116,
-    EUCLEAN = -117,
-    ENOTNAM = -118,
-    ENAVAIL = -119,
-    EISNAM = -120,
-    EREMOTEIO = -121,
-    EDQUOT = -122,
-    ENOMEDIUM = -123,
-    EMEDIUMTYPE = -124,
-    ECANCELED = -125,
-    ENOKEY = -126,
-    EKEYEXPIRED = -127,
-    EKEYREVOKED = -128,
-    EKEYREJECTED = -129,
-    EOWNERDEAD = -130,
-    ENOTRECOVERABLE = -131,
-    ERFKILL = -132,
-    EHWPOISON = -133,
-    ENOTSUP = -95,
 }

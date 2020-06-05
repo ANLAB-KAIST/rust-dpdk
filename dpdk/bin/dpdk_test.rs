@@ -13,5 +13,5 @@ fn main() {
     debug!("TSC Hz: {}", eal.get_tsc_hz());
     debug!("TSC Cycles: {}", eal.get_tsc_cycles());
     debug!("Random: {}", eal.rand());
-    eal.setup(Affinity::Full, Affinity::Full);
+    eal.setup(Affinity::Full, Affinity::Full).ok();
 }
