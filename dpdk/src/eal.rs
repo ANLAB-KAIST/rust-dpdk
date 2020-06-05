@@ -203,7 +203,9 @@ impl MPool {
                 cache_size as u32,
                 priv_size.try_into().unwrap(),
                 data_room_size.try_into().unwrap(),
-                socket_id.map(|x| x.0 as i32).unwrap_or(dpdk_sys::SOCKET_ID_ANY),
+                socket_id
+                    .map(|x| x.0 as i32)
+                    .unwrap_or(dpdk_sys::SOCKET_ID_ANY),
             )
         };
         // The pointer to the new allocated mempool, on success. NULL on error with rte_errno set appropriately.
@@ -219,7 +221,7 @@ impl MPool {
     /// Allocate a `Packet` from the pool.
     ///
     /// # Safety
-    /// 
+    ///
     /// Returned item must not outlive this pool.
     #[inline]
     pub unsafe fn alloc(&self) -> Option<Packet> {
@@ -242,7 +244,9 @@ impl Drop for Packet {
     #[inline]
     fn drop(&mut self) {
         // Safety: foreign function.
-        unsafe { dpdk_sys::rte_pktmbuf_free(self.ptr.as_ptr()); }
+        unsafe {
+            dpdk_sys::rte_pktmbuf_free(self.ptr.as_ptr());
+        }
     }
 }
 
@@ -292,6 +296,7 @@ impl Eal {
     ///
     /// Returns array of `(logical core id, assigned rx queues, assigned tx queues)` on success.
     /// Otherwise, return `ErrorCode`.
+    /// Note: we have clippy warning: complex return type.
     #[inline]
     pub fn setup(
         &self,
@@ -301,7 +306,7 @@ impl Eal {
         let shared_mut = self.inner.shared.write().unwrap();
         if shared_mut.setup_handle {
             // Already initialized.
-            return Err(dpdk_sys::EALREADY.try_into().unwrap())
+            return Err(dpdk_sys::EALREADY.try_into().unwrap());
         }
         // List of valid logical core ids.
         // Note: If some cores are masked, range (0..rte_lcore_count()) will include disabled cores.
@@ -342,11 +347,12 @@ impl Eal {
 
         // Safety: foreign function.
         let port_id_list = (0..u16::try_from(dpdk_sys::RTE_MAX_ETHPORTS).unwrap())
-            .filter(|index| unsafe { dpdk_sys::rte_eth_dev_is_valid_port(*index) > 0 });
+            .filter(|index| unsafe { dpdk_sys::rte_eth_dev_is_valid_port(*index) > 0 })
+            .collect::<Vec<_>>();
 
         // List of `(port, port_socket_id, vec<rx_lcore_ids>, vec<tx_lcore_ids>)`.
         // Note: We need number of rx cores and tx cores at the same time (`rte_eth_dev_configure`)
-        let port_socket_rx_tx_pairs = port_id_list.clone().map(|port_id| {
+        let port_socket_rx_tx_pairs = port_id_list.into_iter().map(|port_id| {
             // Safety: foreign function.
             let port_socket_id = unsafe { dpdk_sys::rte_eth_dev_socket_id(port_id) };
             let rx_cpus: Vec<_> = match rx_affinity {
@@ -369,10 +375,7 @@ impl Eal {
             };
             (
                 Port {
-                    inner: Arc::new(PortInner {
-                        port_id,
-                        
-                    }),
+                    inner: Arc::new(PortInner { port_id }),
                     eal: self.inner.clone(),
                 },
                 rx_cpus,
@@ -450,8 +453,8 @@ impl Eal {
             });
 
         // Ports with configured RX queues
-        let port_configure_socket_rxq_tx_pairs = port_configure_socket_rx_tx_pairs.map(
-            |(port, dev_info, rx_cpus, tx_cpus)| {
+        let port_configure_socket_rxq_tx_pairs =
+            port_configure_socket_rx_tx_pairs.map(|(port, dev_info, rx_cpus, tx_cpus)| {
                 let port_id = port.inner.port_id;
 
                 let cpu_rxq_list = rx_cpus
@@ -486,8 +489,6 @@ impl Eal {
                             RxQ {
                                 inner: Arc::new(RxQInner {
                                     queue_id: rxq_idx as u16,
-                                    
-                                    
                                 }),
                                 port: port.inner.clone(),
                                 mpool: mpool.inner,
@@ -496,8 +497,7 @@ impl Eal {
                     })
                     .collect::<Vec<_>>();
                 (port, dev_info, cpu_rxq_list, tx_cpus)
-            },
-        );
+            });
 
         // Ports with configured TX queues, along with previously configured RX queues.
         let port_configure_socket_rxq_txq_pairs: Vec<_> = port_configure_socket_rxq_tx_pairs
@@ -524,7 +524,6 @@ impl Eal {
                             TxQ {
                                 inner: Arc::new(TxQInner {
                                     queue_id: txq_idx as u16,
-                                    
                                 }),
 
                                 port: port.inner.clone(),
