@@ -265,12 +265,12 @@ impl RxQ {}
 #[derive(Debug, Clone)]
 pub struct TxQ {
     inner: Arc<TxQInner>,
+    port: Arc<PortInner>,
 }
 
 #[derive(Debug)]
 struct TxQInner {
     queue_id: u16,
-    port: Arc<PortInner>,
 }
 
 impl TxQ {}
@@ -524,8 +524,10 @@ impl Eal {
                             TxQ {
                                 inner: Arc::new(TxQInner {
                                     queue_id: txq_idx as u16,
-                                    port: port.inner.clone(),
+                                    
                                 }),
+
+                                port: port.inner.clone(),
                             },
                         )
                     })
