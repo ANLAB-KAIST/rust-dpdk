@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::ptr::NonNull;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 const MAGIC: &str = "be0dd4ab";
@@ -21,6 +21,7 @@ const DEFAULT_PROMISC: bool = true;
 /// Shared mutating states that all `Eal` instances share.
 #[derive(Debug)]
 struct EalGlobalInner {
+    // Whether `setup` has been successfully invoked.
     setup_initialized: bool,
 } // TODO Remove this if unnecessary
 
@@ -35,7 +36,7 @@ impl Default for EalGlobalInner {
 
 #[derive(Debug)]
 struct EalInner {
-    shared: RwLock<EalGlobalInner>,
+    shared: Mutex<EalGlobalInner>,
 }
 
 /// DPDK's environment abstraction layer (EAL).
@@ -65,7 +66,6 @@ pub enum Affinity {
 #[derive(Debug, Clone)]
 pub struct Port {
     inner: Arc<PortInner>,
-    eal: Arc<EalInner>,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -148,18 +148,19 @@ impl Port {
 #[derive(Debug)]
 struct PortInner {
     port_id: u16,
+    eal: Arc<EalInner>,
 }
 
 /// Abstract type for DPDK MPool
 #[derive(Debug, Clone)]
 pub struct MPool {
     inner: Arc<MPoolInner>,
-    eal: Arc<EalInner>,
 }
 
 #[derive(Debug)]
 struct MPoolInner {
     ptr: NonNull<dpdk_sys::rte_mempool>,
+    eal: Arc<EalInner>,
 }
 
 /// # Safety
@@ -222,8 +223,8 @@ impl MPool {
         MPool {
             inner: Arc::new(MPoolInner {
                 ptr: NonNull::new(ptr).unwrap(),
+                eal: eal.inner.clone(),
             }),
-            eal: eal.inner.clone(),
         }
     }
 
@@ -265,14 +266,30 @@ impl Drop for Packet {
 #[derive(Debug, Clone)]
 pub struct RxQ {
     inner: Arc<RxQInner>,
+}
+
+/// Note: RxQ requires a dedicated mempool to receive incoming packets.
+#[derive(Debug)]
+struct RxQInner {
+    queue_id: u16,
     port: Arc<PortInner>,
     mpool: Arc<MPoolInner>,
 }
 
-/// TODO Impl `Drop` that frees the queue.
-#[derive(Debug)]
-struct RxQInner {
-    queue_id: u16,
+impl Drop for RxQInner {
+    #[inline]
+    fn drop(&mut self) {
+        // Safety: foreign function.
+        //
+        // Note: dynamically starting/stopping queue may not be supported by the driver.
+        let ret = unsafe { dpdk_sys::rte_eth_dev_rx_queue_stop(self.port.port_id, self.queue_id) };
+        if ret != 0 {
+            warn!(
+                "RxQInner::drop, non-severe error code({}) while stopping queue {}:{}",
+                ret, self.port.port_id, self.queue_id
+            );
+        }
+    }
 }
 
 impl RxQ {}
@@ -281,13 +298,31 @@ impl RxQ {}
 #[derive(Debug, Clone)]
 pub struct TxQ {
     inner: Arc<TxQInner>,
-    port: Arc<PortInner>,
 }
 
-/// TODO Impl `Drop` that frees the queue.
+/// Note: while RxQ requires a dedicated mempool, Tx operation takes `MBuf`s which are allocated by
+/// other RxQ's mempool or other externally allocated mempools. Thus, TxQ itself does not require
+/// its own mempool.
 #[derive(Debug)]
 struct TxQInner {
     queue_id: u16,
+    port: Arc<PortInner>,
+}
+
+impl Drop for TxQInner {
+    #[inline]
+    fn drop(&mut self) {
+        // Safety: foreign function.
+        //
+        // Note: dynamically starting/stopping queue may not be supported by the driver.
+        let ret = unsafe { dpdk_sys::rte_eth_dev_tx_queue_stop(self.port.port_id, self.queue_id) };
+        if ret != 0 {
+            warn!(
+                "TxQInner::drop, non-severe error code({}) while stopping queue {}:{}",
+                ret, self.port.port_id, self.queue_id
+            );
+        }
+    }
 }
 
 impl TxQ {}
@@ -303,12 +338,11 @@ impl Eal {
         })
     }
 
-    /// Candidate 1, return (thread, rxqs, txqs)
+    /// Setup per-core Rx queues and Tx queues according to the given affinity.  Currently, this
+    /// must be called once for the whole program. Otherwise it will return an error code.  Returns
+    /// array of `(logical core id, assigned rx queues, assigned tx queues)` on success.
     ///
     /// Note: rte_lcore_count: -c ff 옵션에 따라 줄어듬.
-    ///
-    /// Returns array of `(logical core id, assigned rx queues, assigned tx queues)` on success.
-    /// Otherwise, return `ErrorCode`.
     /// Note: we have clippy warning: complex return type.
     #[inline]
     pub fn setup(
@@ -317,7 +351,7 @@ impl Eal {
         tx_affinity: Affinity,
     ) -> Result<Vec<(LCoreId, Vec<RxQ>, Vec<TxQ>)>, ErrorCode> {
         // Acquire globally shared state and check whether already initialized.
-        let mut shared_mut = self.inner.shared.write().unwrap();
+        let mut shared_mut = self.inner.shared.lock().unwrap();
         if shared_mut.setup_initialized {
             // Already initialized.
             return Err(dpdk_sys::EALREADY.try_into().unwrap());
@@ -331,9 +365,8 @@ impl Eal {
 
         // Map of `socket_id` to set of `lcore_id`s belong to the socket.
         let mut socket_to_lcore_map = HashMap::new();
-
-        // Note: using `cloned` iterator let us not to use `*lcore_id` for every line.
-        for lcore_id in lcore_id_list.iter().cloned() {
+        for lcore_id in &lcore_id_list {
+            let lcore_id = *lcore_id;
             // Safety: foreign function.
             let socket_id =
                 unsafe { dpdk_sys::rte_lcore_to_socket_id(lcore_id.try_into().unwrap()) };
@@ -353,12 +386,16 @@ impl Eal {
         debug!("lcore count: {}", socket_to_lcore_map.len());
 
         // List of `Port`s.
-        // Safety: foreign function.
         let port_list = (0..u16::try_from(dpdk_sys::RTE_MAX_ETHPORTS).unwrap())
-            .filter(|index| unsafe { dpdk_sys::rte_eth_dev_is_valid_port(*index) > 0 })
+            .filter(|index| {
+                // Safety: foreign function.
+                unsafe { dpdk_sys::rte_eth_dev_is_valid_port(*index) > 0 }
+            })
             .map(|port_id| Port {
-                inner: Arc::new(PortInner { port_id }),
-                eal: self.inner.clone(),
+                inner: Arc::new(PortInner {
+                    port_id,
+                    eal: self.inner.clone(),
+                }),
             })
             .collect::<Vec<_>>();
 
@@ -483,9 +520,9 @@ impl Eal {
             RxQ {
                 inner: Arc::new(RxQInner {
                     queue_id: rxq_idx as u16,
+                    port: port.inner.clone(),
+                    mpool: mpool.inner,
                 }),
-                port: port.inner.clone(),
-                mpool: mpool.inner,
             }
         }
 
@@ -510,9 +547,8 @@ impl Eal {
             TxQ {
                 inner: Arc::new(TxQInner {
                     queue_id: txq_idx as u16,
+                    port: port.inner.clone(),
                 }),
-
-                port: port.inner.clone(),
             }
         }
 
@@ -536,7 +572,6 @@ impl Eal {
 
         // Map from `lcore_id` to its assigned `(rxq, txq)`.
         let mut lcore_to_rxqtxq_map = HashMap::new();
-
         for port in port_list {
             let (rx_lcores, tx_lcores) =
                 extract_rxtx_lcores(&port, &socket_to_lcore_map, rx_affinity, tx_affinity);
@@ -594,7 +629,7 @@ impl EalInner {
         // Strip first n args and return the remaining
         args.drain(..ret as usize);
         Ok(EalInner {
-            shared: RwLock::new(Default::default()),
+            shared: Mutex::new(Default::default()),
         })
     }
 }
