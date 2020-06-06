@@ -18,23 +18,24 @@ const DEFAULT_MBUF_PRIV_SIZE: usize = 0;
 const DEFAULT_PACKET_DATA_LENGTH: usize = 2048;
 const DEFAULT_PROMISC: bool = true;
 
+/// Shared mutating states that all `Eal` instances share.
 #[derive(Debug)]
-struct EalSharedInner {
-    setup_handle: bool,
+struct EalGlobalInner {
+    setup_initialized: bool,
 } // TODO Remove this if unnecessary
 
-impl Default for EalSharedInner {
+impl Default for EalGlobalInner {
     #[inline]
     fn default() -> Self {
         Self {
-            setup_handle: false,
+            setup_initialized: false,
         }
     }
 }
 
 #[derive(Debug)]
 struct EalInner {
-    shared: RwLock<EalSharedInner>,
+    shared: RwLock<EalGlobalInner>,
 }
 
 /// DPDK's environment abstraction layer (EAL).
@@ -251,6 +252,8 @@ impl Drop for Packet {
 }
 
 /// Abstract type for DPDK RxQ
+///
+/// TODO Support per-queue RX operations
 #[derive(Debug, Clone)]
 pub struct RxQ {
     inner: Arc<RxQInner>,
@@ -258,6 +261,7 @@ pub struct RxQ {
     mpool: Arc<MPoolInner>,
 }
 
+/// TODO Impl `Drop` that frees the queue.
 #[derive(Debug)]
 struct RxQInner {
     queue_id: u16,
@@ -272,6 +276,7 @@ pub struct TxQ {
     port: Arc<PortInner>,
 }
 
+/// TODO Impl `Drop` that frees the queue.
 #[derive(Debug)]
 struct TxQInner {
     queue_id: u16,
@@ -303,8 +308,8 @@ impl Eal {
         rx_affinity: Affinity,
         tx_affinity: Affinity,
     ) -> Result<Vec<(LCoreId, Vec<RxQ>, Vec<TxQ>)>, ErrorCode> {
-        let shared_mut = self.inner.shared.write().unwrap();
-        if shared_mut.setup_handle {
+        let mut shared_mut = self.inner.shared.write().unwrap();
+        if shared_mut.setup_initialized {
             // Already initialized.
             return Err(dpdk_sys::EALREADY.try_into().unwrap());
         }
@@ -335,7 +340,7 @@ impl Eal {
         debug!("lcore count: {}", lcore_socket_pair_list.len());
 
         // Map of `socket_id` to set of `lcore_id`s belong to the socket.
-        let socket_to_lcore_map = lcore_socket_pair_list.clone().into_iter().fold(
+        let socket_to_lcore_map = lcore_socket_pair_list.into_iter().fold(
             HashMap::new(),
             |mut s, (lcore_id, socket_id)| {
                 s.entry(socket_id)
@@ -350,9 +355,9 @@ impl Eal {
             .filter(|index| unsafe { dpdk_sys::rte_eth_dev_is_valid_port(*index) > 0 })
             .collect::<Vec<_>>();
 
-        // List of `(port, port_socket_id, vec<rx_lcore_ids>, vec<tx_lcore_ids>)`.
+        // List of `(port, vec<rx_lcore_ids>, vec<tx_lcore_ids>)`.
         // Note: We need number of rx cores and tx cores at the same time (`rte_eth_dev_configure`)
-        let port_socket_rx_tx_pairs = port_id_list.into_iter().map(|port_id| {
+        let port_rxs_txs_list = port_id_list.into_iter().map(|port_id| {
             // Safety: foreign function.
             let port_socket_id = unsafe { dpdk_sys::rte_eth_dev_socket_id(port_id) };
             let rx_cpus: Vec<_> = match rx_affinity {
@@ -384,8 +389,8 @@ impl Eal {
         });
 
         // Init each port
-        let port_configure_socket_rx_tx_pairs =
-            port_socket_rx_tx_pairs.map(|(port, rx_cpus, tx_cpus)| {
+        let port_configure_socket_rxs_txs_list =
+            port_rxs_txs_list.map(|(port, rx_cpus, tx_cpus)| {
                 let port_id = port.inner.port_id;
                 // Safety: `rte_eth_dev_info` contains primitive integer types. Safe to fill with zeros.
                 let mut dev_info: dpdk_sys::rte_eth_dev_info = unsafe { std::mem::zeroed() };
@@ -453,8 +458,8 @@ impl Eal {
             });
 
         // Ports with configured RX queues
-        let port_configure_socket_rxq_tx_pairs =
-            port_configure_socket_rx_tx_pairs.map(|(port, dev_info, rx_cpus, tx_cpus)| {
+        let port_configure_socket_rxqs_txs_list =
+            port_configure_socket_rxs_txs_list.map(|(port, dev_info, rx_cpus, tx_cpus)| {
                 let port_id = port.inner.port_id;
 
                 let cpu_rxq_list = rx_cpus
@@ -500,7 +505,7 @@ impl Eal {
             });
 
         // Ports with configured TX queues, along with previously configured RX queues.
-        let port_configure_socket_rxq_txq_pairs: Vec<_> = port_configure_socket_rxq_tx_pairs
+        let port_configure_socket_rxqs_txqs_list: Vec<_> = port_configure_socket_rxqs_txs_list
             .map(|(port, dev_info, cpu_rxq_list, tx_cpus)| {
                 let port_id = port.inner.port_id;
 
@@ -538,7 +543,7 @@ impl Eal {
             .collect();
 
         // Map from `lcore_id` to its assigned `(rxq, txq)`.
-        let lcore_to_rxqtxq_map = port_configure_socket_rxq_txq_pairs.into_iter().fold(
+        let lcore_to_rxqtxq_map = port_configure_socket_rxqs_txqs_list.into_iter().fold(
             HashMap::new(),
             |mut m, (port, _, cpu_rxq_list, cpu_txq_list)| {
                 let port_id = port.inner.port_id;
@@ -574,6 +579,9 @@ impl Eal {
                 m
             },
         );
+
+        // Initialization finished
+        shared_mut.setup_initialized = true;
 
         // Return array of `(LCore, Vec<RxQ>, Vec<TxQ>)`.
         Ok(lcore_to_rxqtxq_map
