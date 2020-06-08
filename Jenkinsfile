@@ -1,5 +1,8 @@
 pipeline {
-    agent { dockerfile true }
+    agent {
+        filename 'Dockerfile'
+        args '--privileged -v /mnt/huge:/mnt/huge'
+    }
     stages {
         stage ("Version") {
             steps {
@@ -28,7 +31,7 @@ pipeline {
         }
         stage ("Test (dpdk-sys)") {
             steps {
-                sh "cargo run -p rust-dpdk-sys -- --no-pci --no-huge"
+                sh "cargo run -p rust-dpdk-sys"
             }
         }
     }
