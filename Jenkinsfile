@@ -1,7 +1,9 @@
 pipeline {
     agent {
-        filename 'Dockerfile'
-        args '--privileged -v /mnt/huge:/mnt/huge'
+        dockerfile {
+            filename 'Dockerfile'
+            args '--privileged -v /mnt/huge:/mnt/huge'
+        }
     }
     stages {
         stage ("Version") {
