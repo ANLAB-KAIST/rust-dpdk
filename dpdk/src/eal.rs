@@ -6,6 +6,7 @@ use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
+use std::thread;
 use thiserror::Error;
 
 const MAGIC: &str = "be0dd4ab";
@@ -47,12 +48,6 @@ pub struct Eal {
     inner: Arc<EalInner>,
 }
 
-#[derive(Debug, Error)]
-pub enum EalError {
-    #[error("EAL function returned an error code: {}", code)]
-    ErrorCode { code: i32 },
-}
-
 /// How to create NIC queues for a CPU.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum Affinity {
@@ -83,6 +78,26 @@ impl LCoreId {
     fn new(id: u32) -> Self {
         Self(id)
     }
+
+    /// Launch a thread pined to this core.
+    pub fn launch<F, T>(&self, f: F) -> thread::JoinHandle<T>
+    where
+        F: FnOnce() -> T,
+        F: Send + 'static,
+        T: Send + 'static,
+    {
+        let lcore_id = self.0;
+        thread::spawn(move || {
+            // Safety: foreign function.
+            let ret = unsafe {
+                dpdk_sys::rte_thread_set_affinity(&mut dpdk_sys::rte_lcore_cpuset(lcore_id))
+            };
+            if ret < 0 {
+                warn!("Failed to set affinity on lcore {}", lcore_id);
+            }
+            f()
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -102,34 +117,34 @@ impl SocketId {
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ErrorCode(u8);
-
-impl Into<u8> for ErrorCode {
-    #[inline]
-    fn into(self) -> u8 {
-        self.0
-    }
+#[derive(Debug, Error, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ErrorCode {
+    #[error("Unknown error code: {}", code)]
+    UNKNOWN { code: u8 },
 }
 
 impl From<u8> for ErrorCode {
     #[inline]
-    fn from(id: u8) -> Self {
-        Self(id)
+    fn from(code: u8) -> Self {
+        Self::UNKNOWN { code }
     }
 }
 impl TryFrom<u32> for ErrorCode {
     type Error = <u8 as TryFrom<u32>>::Error;
     #[inline]
-    fn try_from(id: u32) -> Result<Self, Self::Error> {
-        Ok(Self(id.try_into()?))
+    fn try_from(code: u32) -> Result<Self, Self::Error> {
+        Ok(Self::UNKNOWN {
+            code: code.try_into()?,
+        })
     }
 }
 impl TryFrom<i32> for ErrorCode {
     type Error = <u8 as TryFrom<i32>>::Error;
     #[inline]
-    fn try_from(id: i32) -> Result<Self, Self::Error> {
-        Ok(Self((-id).try_into()?))
+    fn try_from(code: i32) -> Result<Self, Self::Error> {
+        Ok(Self::UNKNOWN {
+            code: (-code).try_into()?,
+        })
     }
 }
 
@@ -332,7 +347,7 @@ impl Eal {
     ///
     /// It takes command-line arguments and consumes used arguments.
     #[inline]
-    pub fn new(args: &mut Vec<String>) -> Result<Self, EalError> {
+    pub fn new(args: &mut Vec<String>) -> Result<Self, ErrorCode> {
         Ok(Eal {
             inner: Arc::new(EalInner::new(args)?),
         })
@@ -579,7 +594,7 @@ unsafe impl EalGlobalApi for Eal {}
 impl EalInner {
     // Create `EalInner`.
     #[inline]
-    fn new(args: &mut Vec<String>) -> Result<Self, EalError> {
+    fn new(args: &mut Vec<String>) -> Result<Self, ErrorCode> {
         // To prevent DPDK PMDs' being unlinked, we explicitly create symbolic dependency via
         // calling `load_drivers`.
         dpdk_sys::load_drivers();
@@ -588,7 +603,7 @@ impl EalInner {
         // Safety: foriegn function (safe unless there is a bug)
         let ret = unsafe { ffi::run_with_args(dpdk_sys::rte_eal_init, &*args) };
         if ret < 0 {
-            return Err(EalError::ErrorCode { code: ret });
+            return Err(ret.try_into().unwrap());
         }
 
         // Strip first n args and return the remaining
