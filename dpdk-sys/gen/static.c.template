@@ -7,6 +7,7 @@
 %explicit_pmd_links%
 
 // Following code block is copied from `drivers/mempool/ring`.
+// Original DPDK hash: d7142fbae16f185e11bfa44be061399afc40a1be
 // TODO Automate this process.
 
 /* SPDX-License-Identifier: BSD-3-Clause
