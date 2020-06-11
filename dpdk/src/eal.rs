@@ -4,6 +4,8 @@ use log::{debug, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
+use std::mem::transmute;
+use std::mem::MaybeUninit;
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -163,7 +165,21 @@ impl Port {
 #[derive(Debug)]
 struct PortInner {
     port_id: u16,
+    owner_id: u64,
     eal: Arc<EalInner>,
+}
+
+impl Drop for PortInner {
+    #[inline]
+    fn drop(&mut self) {
+        // Safety: foreign function.
+        let ret = unsafe { dpdk_sys::rte_eth_dev_owner_unset(self.port_id, self.owner_id) };
+        assert_eq!(ret, 0);
+
+        // Safety: foreign function.
+        let ret = unsafe { dpdk_sys::rte_eth_dev_owner_delete(self.owner_id) };
+        assert_eq!(ret, 0);
+    }
 }
 
 /// Abstract type for DPDK MPool
@@ -407,11 +423,34 @@ impl Eal {
                 // Safety: foreign function.
                 unsafe { dpdk_sys::rte_eth_dev_is_valid_port(*index) > 0 }
             })
-            .map(|port_id| Port {
-                inner: Arc::new(PortInner {
-                    port_id,
-                    eal: self.inner.clone(),
-                }),
+            .map(|port_id| {
+                let mut owner_id = 0;
+                // Safety: foreign function.
+                let ret = unsafe { dpdk_sys::rte_eth_dev_owner_new(&mut owner_id) };
+                assert_eq!(ret, 0);
+
+                let mut owner_structure = dpdk_sys::rte_eth_dev_owner {
+                    id: owner_id,
+                    // Safety: `c_char` array can accept zeroed data.
+                    name: unsafe { MaybeUninit::zeroed().assume_init() },
+                };
+                let owner_name = format!("rust_dpdk_port_owner_{}", port_id);
+                let name_cstring = CString::new(owner_name).unwrap();
+                let name_bytes = name_cstring.as_bytes_with_nul();
+                // Safety: converting &[u8] string into &[i8] string.
+                owner_structure.name[0..name_bytes.len()]
+                    .copy_from_slice(unsafe { transmute(name_bytes) });
+                // Safety: foreign function.
+                let ret = unsafe { dpdk_sys::rte_eth_dev_owner_set(port_id, &owner_structure) };
+                assert_eq!(ret, 0);
+
+                Port {
+                    inner: Arc::new(PortInner {
+                        port_id,
+                        owner_id,
+                        eal: self.inner.clone(),
+                    }),
+                }
             })
             .collect::<Vec<_>>();
 
