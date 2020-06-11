@@ -175,10 +175,12 @@ impl Drop for PortInner {
         // Safety: foreign function.
         let ret = unsafe { dpdk_sys::rte_eth_dev_owner_unset(self.port_id, self.owner_id) };
         assert_eq!(ret, 0);
-
-        // Safety: foreign function.
-        let ret = unsafe { dpdk_sys::rte_eth_dev_owner_delete(self.owner_id) };
-        assert_eq!(ret, 0);
+        // TODO following code causes segmentation fault.  Its DPDK's bug that
+        // `rte_eth_dev_owner_delete` does not check whether `rte_eth_devices[port_id].data` is
+        // null.  Safety: foreign function.
+        // let ret = unsafe { dpdk_sys::rte_eth_dev_owner_delete(self.owner_id) };
+        // assert_eq!(ret, 0);
+        info!("Port {} cleaned up", self.port_id);
     }
 }
 
@@ -613,6 +615,8 @@ impl Eal {
             // Safety: foreign function.
             let ret = unsafe { dpdk_sys::rte_eth_dev_start(port_id) };
             assert_eq!(ret, 0);
+
+            info!("Port {} initialized", port_id);
         }
 
         // Initialization finished
@@ -660,10 +664,11 @@ impl Drop for EalInner {
         unsafe {
             let ret = dpdk_sys::rte_eal_cleanup();
             if ret == -(dpdk_sys::ENOTSUP as i32) {
-                warn!("EAL Cleanup is not implemented.");
+                warn!("EAL cleanup is not implemented.");
                 return;
             }
             assert_eq!(ret, 0);
+            info!("EAL cleaned up");
         }
     }
 }
