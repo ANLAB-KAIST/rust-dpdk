@@ -1,4 +1,5 @@
 //! Wrapper for DPDK's environment abstraction layer (EAL).
+use arrayvec::*;
 use ffi;
 use log::{debug, info, warn};
 use std::collections::{HashMap, HashSet};
@@ -20,6 +21,8 @@ const DEFAULT_RX_PER_CORE_CACHE: usize = 0;
 const DEFAULT_MBUF_PRIV_SIZE: usize = 0;
 const DEFAULT_PACKET_DATA_LENGTH: usize = 2048;
 const DEFAULT_PROMISC: bool = true;
+const DEFAULT_RX_BURST: usize = 32;
+const DEFAULT_TX_BURST: usize = 32;
 
 /// Shared mutating states that all `Eal` instances share.
 #[derive(Debug)]
@@ -160,6 +163,17 @@ impl Port {
                 .unwrap()
         })
     }
+
+    /// Returns NUMA node of current port.
+    #[inline]
+    pub fn mac_addr(&self) -> [u8; 6] {
+        unsafe {
+            let mut mac_addr = MaybeUninit::uninit();
+            let ret = dpdk_sys::rte_eth_macaddr_get(self.inner.port_id, mac_addr.as_mut_ptr());
+            assert_eq!(ret, 0);
+            mac_addr.assume_init().addr_bytes
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -278,6 +292,7 @@ impl MPool {
     }
 }
 
+// TODO Verify that `*mut Packet` can be transformed to `*mut *mut rte_mbuf`.
 #[derive(Debug)]
 pub struct Packet {
     ptr: NonNull<dpdk_sys::rte_mbuf>,
@@ -325,7 +340,24 @@ impl Drop for RxQInner {
     }
 }
 
-impl RxQ {}
+impl RxQ {
+    /// Receive packets and store it to the given arrayvec.
+    #[inline]
+    pub fn rx(&self, buffer: &mut ArrayVec<[Packet; DEFAULT_RX_BURST]>) {
+        let current = buffer.len();
+        let remaining = buffer.capacity() - current;
+        unsafe {
+            let pkt_buffer: *mut *mut dpdk_sys::rte_mbuf = transmute(buffer.as_mut_ptr());
+            let cnt = dpdk_sys::rte_eth_rx_burst(
+                self.inner.port.port_id,
+                self.inner.queue_id,
+                pkt_buffer.offset(current as isize),
+                remaining as u16,
+            );
+            buffer.set_len(current + cnt as usize);
+        }
+    }
+}
 
 /// Abstract type for DPDK TxQ
 #[derive(Debug, Clone)]
@@ -358,7 +390,33 @@ impl Drop for TxQInner {
     }
 }
 
-impl TxQ {}
+impl TxQ {
+    /// Try transmit packets in the given arrayvec buffer.
+    /// All packets in the buffer will be sent or be abandoned.
+    #[inline]
+    pub fn tx(&self, buffer: &mut ArrayVec<[Packet; DEFAULT_RX_BURST]>) {
+        let current = buffer.len();
+        // Safety: this block is very dangerous.
+        unsafe {
+            // Get raw pointer of arrayvec
+            let pkt_buffer: *mut *mut dpdk_sys::rte_mbuf = transmute(buffer.as_mut_ptr());
+            // Try transmit packets. It will return number of successfully transmitted packets.
+            // Successfully transmitted packets are automatically dropped by `rte_eth_tx_burst`.
+            let cnt = dpdk_sys::rte_eth_tx_burst(
+                self.inner.port.port_id,
+                self.inner.queue_id,
+                pkt_buffer,
+                current as u16,
+            );
+            // We have to manually free unsent packets, or the arrayvec will be unstable.
+            for i in cnt as usize..current {
+                dpdk_sys::rte_pktmbuf_free(*(pkt_buffer.offset(i as isize)));
+            }
+            // Anyhow, all packets in the buffer is sent or destroyed.
+            buffer.set_len(0);
+        }
+    }
+}
 
 impl Eal {
     /// Create an `Eal` instance.
@@ -440,6 +498,8 @@ impl Eal {
                 let name_cstring = CString::new(owner_name).unwrap();
                 let name_bytes = name_cstring.as_bytes_with_nul();
                 // Safety: converting &[u8] string into &[i8] string.
+                // TODO 다음 clippy warning을 어떻게 봐야 할 지 모르겠습니다.
+                // help: try: `&*(name_bytes as *const [u8] as *const [i8])`
                 owner_structure.name[0..name_bytes.len()]
                     .copy_from_slice(unsafe { transmute(name_bytes) });
                 // Safety: foreign function.
