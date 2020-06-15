@@ -5,24 +5,23 @@ use log::{debug, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
-use std::mem::transmute;
-use std::mem::MaybeUninit;
+use std::mem::{size_of, transmute, MaybeUninit};
 use std::ptr::NonNull;
+use std::slice;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use thiserror::Error;
 
 const MAGIC: &str = "be0dd4ab";
 
-const DEFAULT_TX_DESC: u16 = 128;
-const DEFAULT_RX_DESC: u16 = 128;
-const DEFAULT_RX_POOL_SIZE: usize = 1024;
-const DEFAULT_RX_PER_CORE_CACHE: usize = 0;
-const DEFAULT_MBUF_PRIV_SIZE: usize = 0;
-const DEFAULT_PACKET_DATA_LENGTH: usize = 2048;
-const DEFAULT_PROMISC: bool = true;
-const DEFAULT_RX_BURST: usize = 32;
-const DEFAULT_TX_BURST: usize = 32;
+pub const DEFAULT_TX_DESC: u16 = 128;
+pub const DEFAULT_RX_DESC: u16 = 128;
+pub const DEFAULT_RX_POOL_SIZE: usize = 1024;
+pub const DEFAULT_RX_PER_CORE_CACHE: usize = 0;
+pub const DEFAULT_PACKET_DATA_LENGTH: usize = 2048;
+pub const DEFAULT_PROMISC: bool = true;
+pub const DEFAULT_RX_BURST: usize = 32;
+pub const DEFAULT_TX_BURST: usize = 32;
 
 /// Shared mutating states that all `Eal` instances share.
 #[derive(Debug)]
@@ -125,20 +124,20 @@ impl SocketId {
 #[derive(Debug, Error, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ErrorCode {
     #[error("Unknown error code: {}", code)]
-    UNKNOWN { code: u8 },
+    Unknown { code: u8 },
 }
 
 impl From<u8> for ErrorCode {
     #[inline]
     fn from(code: u8) -> Self {
-        Self::UNKNOWN { code }
+        Self::Unknown { code }
     }
 }
 impl TryFrom<u32> for ErrorCode {
     type Error = <u8 as TryFrom<u32>>::Error;
     #[inline]
     fn try_from(code: u32) -> Result<Self, Self::Error> {
-        Ok(Self::UNKNOWN {
+        Ok(Self::Unknown {
             code: code.try_into()?,
         })
     }
@@ -147,7 +146,7 @@ impl TryFrom<i32> for ErrorCode {
     type Error = <u8 as TryFrom<i32>>::Error;
     #[inline]
     fn try_from(code: i32) -> Result<Self, Self::Error> {
-        Ok(Self::UNKNOWN {
+        Ok(Self::Unknown {
             code: (-code).try_into()?,
         })
     }
@@ -174,12 +173,87 @@ impl Port {
             mac_addr.assume_init().addr_bytes
         }
     }
+
+    /// Returns current statistics
+    #[inline]
+    pub fn get_stat(&self) -> PortStat {
+        // Safety: foreign function. Uninitialized data structure will be filled.
+        let dpdk_stat = unsafe {
+            let mut temp = MaybeUninit::uninit();
+            let ret = dpdk_sys::rte_eth_stats_get(self.inner.port_id, temp.as_mut_ptr());
+            assert_eq!(ret, 0);
+            temp.assume_init()
+        };
+        if self.inner.has_stats_reset {
+            PortStat {
+                ipackets: dpdk_stat.ipackets,
+                opackets: dpdk_stat.opackets,
+                ibytes: dpdk_stat.ibytes,
+                obytes: dpdk_stat.obytes,
+                ierrors: dpdk_stat.ierrors,
+                oerrors: dpdk_stat.oerrors,
+            }
+        } else {
+            let prev_stat = self.inner.prev_stat.lock().unwrap();
+            PortStat {
+                ipackets: dpdk_stat.ipackets - prev_stat.ipackets,
+                opackets: dpdk_stat.opackets - prev_stat.opackets,
+                ibytes: dpdk_stat.ibytes - prev_stat.ibytes,
+                obytes: dpdk_stat.obytes - prev_stat.obytes,
+                ierrors: dpdk_stat.ierrors - prev_stat.ierrors,
+                oerrors: dpdk_stat.oerrors - prev_stat.oerrors,
+            }
+        }
+    }
+
+    /// Returns current statistics
+    #[inline]
+    pub fn reset_stat(&self) {
+        // Safety: foreign function.
+        if self.inner.has_stats_reset {
+            let ret = unsafe { dpdk_sys::rte_eth_stats_reset(self.inner.port_id) };
+            assert_eq!(ret, 0);
+        } else {
+            // Safety: foreign function. Uninitialized data structure will be filled.
+            let dpdk_stat = unsafe {
+                let mut temp = MaybeUninit::uninit();
+                let ret = dpdk_sys::rte_eth_stats_get(self.inner.port_id, temp.as_mut_ptr());
+                assert_eq!(ret, 0);
+                temp.assume_init()
+            };
+            let mut prev_stat = self.inner.prev_stat.lock().unwrap();
+            prev_stat.ipackets = dpdk_stat.ipackets;
+            prev_stat.opackets = dpdk_stat.opackets;
+            prev_stat.ibytes = dpdk_stat.ibytes;
+            prev_stat.obytes = dpdk_stat.obytes;
+            prev_stat.ierrors = dpdk_stat.ierrors;
+            prev_stat.oerrors = dpdk_stat.oerrors;
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct PortStat {
+    #[doc = "< Total number of successfully received packets."]
+    pub ipackets: u64,
+    #[doc = "< Total number of successfully transmitted packets."]
+    pub opackets: u64,
+    #[doc = "< Total number of successfully received bytes."]
+    pub ibytes: u64,
+    #[doc = "< Total number of successfully transmitted bytes."]
+    pub obytes: u64,
+    #[doc = "< Total number of erroneous received packets."]
+    pub ierrors: u64,
+    #[doc = "< Total number of failed transmitted packets."]
+    pub oerrors: u64,
 }
 
 #[derive(Debug)]
 struct PortInner {
     port_id: u16,
     owner_id: u64,
+    has_stats_reset: bool,
+    prev_stat: Mutex<PortStat>,
     eal: Arc<EalInner>,
 }
 
@@ -203,6 +277,10 @@ impl Drop for PortInner {
 pub struct MPool {
     inner: Arc<MPoolInner>,
 }
+
+/// Note: this structure must be able to support `MaybeUninit::zeroed().assume_init()`.
+#[derive(Debug)]
+struct MPoolPriv {}
 
 #[derive(Debug)]
 struct MPoolInner {
@@ -231,9 +309,6 @@ impl MPool {
     ///
     /// @param cache_size Size of the per-core object cache.
     ///
-    /// @param priv_size Size of application private are between the rte_mbuf structure and the data
-    /// buffer. This value must be aligned to RTE_MBUF_PRIV_ALIGN.
-    ///
     /// @param data_room_size Size of data buffer in each mbuf, including RTE_PKTMBUF_HEADROOM.
     ///
     /// @param socket_id The socket identifier where the memory should be allocated. The value can
@@ -244,21 +319,18 @@ impl MPool {
         name: S,
         n: usize,
         cache_size: usize,
-        priv_size: usize,
         data_room_size: usize,
         socket_id: Option<SocketId>,
     ) -> Self {
         let pool_name = CString::new(name.as_ref()).unwrap();
 
         // Safety: foreign function.
-        // Note: if we need additional metadata (priv_data),
-        // assign `(((size_of::<MPoolPriv>() + 7) / 8) * 8) as u16` instead of `0`.
         let ptr = unsafe {
             dpdk_sys::rte_pktmbuf_pool_create(
                 pool_name.into_bytes_with_nul().as_ptr() as *mut i8,
                 n.try_into().unwrap(),
                 cache_size as u32,
-                priv_size.try_into().unwrap(),
+                (((size_of::<MPoolPriv>() + 7) / 8) * 8) as u16,
                 data_room_size.try_into().unwrap(),
                 socket_id
                     .map(|x| x.0 as i32)
@@ -290,12 +362,125 @@ impl MPool {
             ptr: NonNull::new(pkt_ptr)?,
         })
     }
+
+    /// Allocate `Packet`s to fill the remaining capacity of the given `ArrayVec`.
+    ///
+    /// # Safety
+    ///
+    /// Returned items must not outlive this pool.
+    #[inline]
+    pub unsafe fn alloc_bulk<A: Array<Item = Packet>>(&self, buffer: &mut ArrayVec<A>) -> bool {
+        let current_offset = buffer.len();
+        let capacity = buffer.capacity();
+        let remaining = capacity - current_offset;
+        // Safety: foreign function.
+        // Safety: manual arrayvec manipulation.
+        // `alloc_bulk` is temporarily unsafe. Leaving this unsafe block.
+        unsafe {
+            let pkt_buffer: *mut *mut dpdk_sys::rte_mbuf = transmute(buffer.as_mut_ptr());
+            let ret = dpdk_sys::rte_pktmbuf_alloc_bulk(
+                self.inner.ptr.as_ptr(),
+                pkt_buffer.offset(current_offset as isize),
+                remaining as u32,
+            );
+
+            if ret == 0 {
+                buffer.set_len(capacity);
+                return true;
+            }
+        }
+        return false;
+    }
 }
 
-// TODO Verify that `*mut Packet` can be transformed to `*mut *mut rte_mbuf`.
+/// An owned reference to `Packet`.
+/// TODO Verify that `*mut Packet` can be transformed to `*mut *mut rte_mbuf`.
 #[derive(Debug)]
 pub struct Packet {
     ptr: NonNull<dpdk_sys::rte_mbuf>,
+}
+
+impl Packet {
+    /// Read data_len field
+    #[inline]
+    pub fn length(&self) -> usize {
+        unsafe { self.ptr.as_ref().data_len }.into()
+    }
+
+    /// Read buf_len field
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        unsafe { self.ptr.as_ref().buf_len }.into()
+    }
+
+    /// Read priv_data field
+    /// TODO we will save non-public, FPS-specific metadata to `MPoolPriv`.
+    #[inline]
+    fn priv_data(&self) -> &MPoolPriv {
+        // Safety: All MPool instances have reserved private data for `MPoolPriv`.
+        unsafe { &*(dpdk_sys::rte_mbuf_to_priv(self.ptr.as_ptr()) as *const MPoolPriv) }
+    }
+
+    /// Read/Write priv_data field
+    /// TODO we will save non-public, FPS-specific metadata to `MPoolPriv`.
+    #[inline]
+    fn priv_data_mut(&mut self) -> &mut MPoolPriv {
+        // Safety: All MPool instances have reserved private data for `MPoolPriv`.
+        unsafe { &mut *(dpdk_sys::rte_mbuf_to_priv(self.ptr.as_ptr()) as *mut MPoolPriv) }
+    }
+
+    /// Get raw buffer regardless of current packet length
+    #[inline]
+    pub fn buffer_mut(&mut self) -> &mut [u8] {
+        unsafe {
+            let mbuf_ptr = self.ptr.as_ptr();
+            slice::from_raw_parts_mut(
+                (*mbuf_ptr)
+                    .buf_addr
+                    .offset((*mbuf_ptr).data_off.try_into().unwrap()) as *mut u8,
+                (*mbuf_ptr).buf_len.into(),
+            )
+        }
+    }
+
+    /// Read pkt_len field
+    #[inline]
+    pub fn buffer(&self) -> &[u8] {
+        unsafe {
+            let mbuf_ptr = self.ptr.as_ptr();
+            slice::from_raw_parts(
+                (*mbuf_ptr)
+                    .buf_addr
+                    .offset((*mbuf_ptr).data_off.try_into().unwrap()) as *const u8,
+                (*mbuf_ptr).buf_len.into(),
+            )
+        }
+    }
+
+    /// Change the packet length
+    #[inline]
+    pub fn set_length(&mut self, size: usize) {
+        // Safety: buffer boundary is guarded by the assert statement.
+        unsafe {
+            let mbuf_ptr = self.ptr.as_ptr();
+            assert!((*mbuf_ptr).buf_len >= size as u16);
+            (*mbuf_ptr).data_len = size as u16;
+            (*mbuf_ptr).pkt_len = size as u32;
+        }
+    }
+
+    /// Get read-only data bound to current packet length
+    #[inline]
+    pub fn data(&self) -> &[u8] {
+        &self.buffer()[0..self.length()]
+    }
+
+    /// Get read-only data bound to current packet length
+    #[inline]
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        let len = self.length();
+        &mut self.buffer_mut()[0..len]
+    }
 }
 
 impl Drop for Packet {
@@ -320,7 +505,7 @@ pub struct RxQ {
 #[derive(Debug)]
 struct RxQInner {
     queue_id: u16,
-    port: Arc<PortInner>,
+    port: Port,
     mpool: Arc<MPoolInner>,
 }
 
@@ -330,11 +515,12 @@ impl Drop for RxQInner {
         // Safety: foreign function.
         //
         // Note: dynamically starting/stopping queue may not be supported by the driver.
-        let ret = unsafe { dpdk_sys::rte_eth_dev_rx_queue_stop(self.port.port_id, self.queue_id) };
+        let ret =
+            unsafe { dpdk_sys::rte_eth_dev_rx_queue_stop(self.port.inner.port_id, self.queue_id) };
         if ret != 0 {
             warn!(
                 "RxQInner::drop, non-severe error code({}) while stopping queue {}:{}",
-                ret, self.port.port_id, self.queue_id
+                ret, self.port.inner.port_id, self.queue_id
             );
         }
     }
@@ -349,13 +535,19 @@ impl RxQ {
         unsafe {
             let pkt_buffer: *mut *mut dpdk_sys::rte_mbuf = transmute(buffer.as_mut_ptr());
             let cnt = dpdk_sys::rte_eth_rx_burst(
-                self.inner.port.port_id,
+                self.inner.port.inner.port_id,
                 self.inner.queue_id,
                 pkt_buffer.offset(current as isize),
                 remaining as u16,
             );
             buffer.set_len(current + cnt as usize);
         }
+    }
+
+    /// Get port of this queue.
+    #[inline]
+    pub fn port(&self) -> &Port {
+        &self.inner.port
     }
 }
 
@@ -371,7 +563,7 @@ pub struct TxQ {
 #[derive(Debug)]
 struct TxQInner {
     queue_id: u16,
-    port: Arc<PortInner>,
+    port: Port,
 }
 
 impl Drop for TxQInner {
@@ -380,11 +572,12 @@ impl Drop for TxQInner {
         // Safety: foreign function.
         //
         // Note: dynamically starting/stopping queue may not be supported by the driver.
-        let ret = unsafe { dpdk_sys::rte_eth_dev_tx_queue_stop(self.port.port_id, self.queue_id) };
+        let ret =
+            unsafe { dpdk_sys::rte_eth_dev_tx_queue_stop(self.port.inner.port_id, self.queue_id) };
         if ret != 0 {
             warn!(
                 "TxQInner::drop, non-severe error code({}) while stopping queue {}:{}",
-                ret, self.port.port_id, self.queue_id
+                ret, self.port.inner.port_id, self.queue_id
             );
         }
     }
@@ -394,7 +587,7 @@ impl TxQ {
     /// Try transmit packets in the given arrayvec buffer.
     /// All packets in the buffer will be sent or be abandoned.
     #[inline]
-    pub fn tx(&self, buffer: &mut ArrayVec<[Packet; DEFAULT_RX_BURST]>) {
+    pub fn tx(&self, buffer: &mut ArrayVec<[Packet; DEFAULT_TX_BURST]>) {
         let current = buffer.len();
         // Safety: this block is very dangerous.
         unsafe {
@@ -403,7 +596,7 @@ impl TxQ {
             // Try transmit packets. It will return number of successfully transmitted packets.
             // Successfully transmitted packets are automatically dropped by `rte_eth_tx_burst`.
             let cnt = dpdk_sys::rte_eth_tx_burst(
-                self.inner.port.port_id,
+                self.inner.port.inner.port_id,
                 self.inner.queue_id,
                 pkt_buffer,
                 current as u16,
@@ -415,6 +608,43 @@ impl TxQ {
             // Anyhow, all packets in the buffer is sent or destroyed.
             buffer.set_len(0);
         }
+    }
+
+    /// Make copies of MBufs and transmit them.
+    /// All packets in the buffer will be sent or be abandoned.
+    #[inline]
+    pub fn tx_cloned(&self, buffer: &ArrayVec<[Packet; DEFAULT_TX_BURST]>) {
+        let current = buffer.len();
+        // Safety: this block is very dangerous.
+        unsafe {
+            // Pre-increase mbuf's refcnt.
+            // Note: `buffer: &ArrayVec` ensures that the content of packets never changes.
+            for pkt in buffer {
+                dpdk_sys::rte_pktmbuf_refcnt_update(pkt.ptr.as_ptr(), 1);
+            }
+
+            // Get raw pointer of arrayvec
+            let pkt_buffer: *mut *mut dpdk_sys::rte_mbuf = transmute(buffer.as_ptr());
+            // Try transmit packets. It will return number of successfully transmitted packets.
+            // Successfully transmitted packets are automatically dropped by `rte_eth_tx_burst`.
+            let cnt = dpdk_sys::rte_eth_tx_burst(
+                self.inner.port.inner.port_id,
+                self.inner.queue_id,
+                pkt_buffer,
+                current as u16,
+            );
+            // We have to manually free unsent packets, or some packets will leak.
+            for i in cnt as usize..current {
+                dpdk_sys::rte_pktmbuf_free(*(pkt_buffer.offset(i as isize)));
+            }
+            // As all mbuf's references are already increases, we do not have to free the arrayvec.
+        }
+    }
+
+    /// Get port of this queue.
+    #[inline]
+    pub fn port(&self) -> &Port {
+        &self.inner.port
     }
 }
 
@@ -510,6 +740,8 @@ impl Eal {
                     inner: Arc::new(PortInner {
                         port_id,
                         owner_id,
+                        has_stats_reset: true,
+                        prev_stat: Mutex::new(Default::default()),
                         eal: self.inner.clone(),
                     }),
                 }
@@ -518,7 +750,7 @@ impl Eal {
 
         // Map from `lcore_id` to its assigned `(rxq, txq)`.
         let mut lcore_to_rxqtxq_map = HashMap::new();
-        for port in port_list {
+        for mut port in port_list {
             let port_id = port.inner.port_id;
             let socket_id = port.socket_id();
             // Extract RX cores and TX cores according to the given affinity information.
@@ -600,7 +832,6 @@ impl Eal {
                     self,
                     pool_name,
                     DEFAULT_RX_POOL_SIZE,
-                    DEFAULT_MBUF_PRIV_SIZE,
                     DEFAULT_RX_PER_CORE_CACHE,
                     DEFAULT_PACKET_DATA_LENGTH,
                     Some(port.socket_id()),
@@ -620,7 +851,7 @@ impl Eal {
                 let rxq = RxQ {
                     inner: Arc::new(RxQInner {
                         queue_id: rxq_idx as u16,
-                        port: port.inner.clone(),
+                        port: port.clone(),
                         mpool: mpool.inner,
                     }),
                 };
@@ -650,7 +881,7 @@ impl Eal {
                 let txq = TxQ {
                     inner: Arc::new(TxQInner {
                         queue_id: txq_idx as u16,
-                        port: port.inner.clone(),
+                        port: port.clone(),
                     }),
                 };
                 // Insert created TxQ to the `lcore, (rxqs, txqs)` map.
@@ -675,6 +906,14 @@ impl Eal {
             // Safety: foreign function.
             let ret = unsafe { dpdk_sys::rte_eth_dev_start(port_id) };
             assert_eq!(ret, 0);
+
+            // Check whether stats_reset is supported.
+            // Safety: foreign function. Uninitialized data structure will be filled.
+            let ret = unsafe { dpdk_sys::rte_eth_stats_reset(port_id) };
+            if ret == -(dpdk_sys::ENOTSUP as i32) {
+                warn!("stats_reset is not supported. Fallback to software emulation.");
+                Arc::get_mut(&mut port.inner).unwrap().has_stats_reset = false;
+            }
 
             info!("Port {} initialized", port_id);
         }
