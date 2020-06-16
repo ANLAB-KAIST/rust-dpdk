@@ -5,6 +5,7 @@ use log::{debug, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
+use std::fmt;
 use std::mem::{size_of, transmute, MaybeUninit};
 use std::ptr::NonNull;
 use std::slice;
@@ -23,12 +24,26 @@ pub const DEFAULT_PROMISC: bool = true;
 pub const DEFAULT_RX_BURST: usize = 32;
 pub const DEFAULT_TX_BURST: usize = 32;
 
+/// Request garbage collection.
+struct GcReq {
+    check: Box<dyn Fn() -> bool>,
+    free: Box<dyn Fn() -> ()>,
+}
+impl fmt::Debug for GcReq {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GcReq").finish()
+    }
+}
+
 /// Shared mutating states that all `Eal` instances share.
 #[derive(Debug)]
 struct EalGlobalInner {
     // Whether `setup` has been successfully invoked.
     setup_initialized: bool,
-    mpool_free_list: Vec<NonNull<dpdk_sys::rte_mempool>>,
+    // List of garbage collection requrests.
+    // TODO: periodically do cleanup.
+    gc_reqs: Vec<GcReq>,
 } // TODO Remove this if unnecessary
 
 // Safety: rte_mempool is thread-safe.
@@ -40,7 +55,7 @@ impl Default for EalGlobalInner {
     fn default() -> Self {
         Self {
             setup_initialized: false,
-            mpool_free_list: Default::default(),
+            gc_reqs: Default::default(),
         }
     }
 }
@@ -307,13 +322,30 @@ unsafe impl Sync for MPoolInner {}
 impl Drop for MPoolInner {
     #[inline]
     fn drop(&mut self) {
-        // Note: deferred free via Eal
-        self.eal
-            .shared
-            .lock()
-            .unwrap()
-            .mpool_free_list
-            .push(self.ptr.clone());
+        // Check whether the pool can be destroyed now.
+        // Note: I am the only reference to the pool object.
+        let move_ptr = self.ptr.as_ptr();
+        let check_full = Box::new(move || {
+            // Safety: foreign function.
+            unsafe { dpdk_sys::rte_mempool_full(move_ptr) > 0 }
+        });
+        let free_pool = Box::new(move || {
+            // Safety: foreign function.
+            unsafe { dpdk_sys::rte_mempool_free(move_ptr) };
+        });
+
+        if check_full() {
+            // Case: no dangling mbuf
+            // Safety: foreign function.
+            free_pool();
+        } else {
+            // Case: with dangling mbufs
+            // Note: deferred free via Eal
+            self.eal.shared.lock().unwrap().gc_reqs.push(GcReq {
+                check: check_full,
+                free: free_pool,
+            });
+        }
     }
 }
 
@@ -351,7 +383,7 @@ impl MPool {
             let pkt_buffer: *mut *mut dpdk_sys::rte_mbuf = transmute(buffer.as_mut_ptr());
             let ret = dpdk_sys::rte_pktmbuf_alloc_bulk(
                 self.inner.ptr.as_ptr(),
-                pkt_buffer.offset(current_offset as isize),
+                pkt_buffer.add(current_offset),
                 remaining as u32,
             );
 
@@ -408,7 +440,7 @@ impl Packet {
             slice::from_raw_parts(
                 (*mbuf_ptr)
                     .buf_addr
-                    .offset((*mbuf_ptr).data_off.try_into().unwrap()) as *const u8,
+                    .add((*mbuf_ptr).data_off.try_into().unwrap()) as *const u8,
                 (*mbuf_ptr).buf_len.into(),
             )
         }
@@ -422,7 +454,7 @@ impl Packet {
             slice::from_raw_parts_mut(
                 (*mbuf_ptr)
                     .buf_addr
-                    .offset((*mbuf_ptr).data_off.try_into().unwrap()) as *mut u8,
+                    .add((*mbuf_ptr).data_off.try_into().unwrap()) as *mut u8,
                 (*mbuf_ptr).buf_len.into(),
             )
         }
@@ -500,15 +532,15 @@ impl Drop for RxQInner {
 impl RxQ {
     /// Receive packets and store it to the given arrayvec.
     #[inline]
-    pub fn rx(&self, buffer: &mut ArrayVec<[Packet; DEFAULT_RX_BURST]>) {
+    pub fn rx<A: Array<Item = Packet>>(&self, buffer: &mut ArrayVec<A>) {
         let current = buffer.len();
         let remaining = buffer.capacity() - current;
         unsafe {
-            let pkt_buffer: *mut *mut dpdk_sys::rte_mbuf = transmute(buffer.as_mut_ptr());
+            let pkt_buffer = buffer.as_mut_ptr() as *mut *mut dpdk_sys::rte_mbuf;
             let cnt = dpdk_sys::rte_eth_rx_burst(
                 self.inner.port.inner.port_id,
                 self.inner.queue_id,
-                pkt_buffer.offset(current as isize),
+                pkt_buffer.add(current),
                 remaining as u16,
             );
             buffer.set_len(current + cnt as usize);
@@ -558,12 +590,12 @@ impl TxQ {
     /// Try transmit packets in the given arrayvec buffer.
     /// All packets in the buffer will be sent or be abandoned.
     #[inline]
-    pub fn tx(&self, buffer: &mut ArrayVec<[Packet; DEFAULT_TX_BURST]>) {
+    pub fn tx<A: Array<Item = Packet>>(&self, buffer: &mut ArrayVec<A>) {
         let current = buffer.len();
         // Safety: this block is very dangerous.
         unsafe {
             // Get raw pointer of arrayvec
-            let pkt_buffer: *mut *mut dpdk_sys::rte_mbuf = transmute(buffer.as_mut_ptr());
+            let pkt_buffer = buffer.as_mut_ptr() as *mut *mut dpdk_sys::rte_mbuf;
             // Try transmit packets. It will return number of successfully transmitted packets.
             // Successfully transmitted packets are automatically dropped by `rte_eth_tx_burst`.
             let cnt = dpdk_sys::rte_eth_tx_burst(
@@ -574,7 +606,7 @@ impl TxQ {
             );
             // We have to manually free unsent packets, or the arrayvec will be unstable.
             for i in cnt as usize..current {
-                dpdk_sys::rte_pktmbuf_free(*(pkt_buffer.offset(i as isize)));
+                dpdk_sys::rte_pktmbuf_free(*(pkt_buffer.add(i)));
             }
             // Anyhow, all packets in the buffer is sent or destroyed.
             buffer.set_len(0);
@@ -584,7 +616,7 @@ impl TxQ {
     /// Make copies of MBufs and transmit them.
     /// All packets in the buffer will be sent or be abandoned.
     #[inline]
-    pub fn tx_cloned(&self, buffer: &ArrayVec<[Packet; DEFAULT_TX_BURST]>) {
+    pub fn tx_cloned<A: Array<Item = Packet>>(&self, buffer: &ArrayVec<A>) {
         let current = buffer.len();
         // Safety: this block is very dangerous.
         unsafe {
@@ -595,7 +627,7 @@ impl TxQ {
             }
 
             // Get raw pointer of arrayvec
-            let pkt_buffer: *mut *mut dpdk_sys::rte_mbuf = transmute(buffer.as_ptr());
+            let pkt_buffer = buffer.as_ptr() as *mut *mut dpdk_sys::rte_mbuf;
             // Try transmit packets. It will return number of successfully transmitted packets.
             // Successfully transmitted packets are automatically dropped by `rte_eth_tx_burst`.
             let cnt = dpdk_sys::rte_eth_tx_burst(
@@ -606,7 +638,7 @@ impl TxQ {
             );
             // We have to manually free unsent packets, or some packets will leak.
             for i in cnt as usize..current {
-                dpdk_sys::rte_pktmbuf_free(*(pkt_buffer.offset(i as isize)));
+                dpdk_sys::rte_pktmbuf_free(*(pkt_buffer.add(i)));
             }
             // As all mbuf's references are already increases, we do not have to free the arrayvec.
         }
@@ -744,7 +776,8 @@ impl Eal {
                 let name_cstring = CString::new(owner_name).unwrap();
                 let name_bytes = name_cstring.as_bytes_with_nul();
                 // Safety: converting &[u8] string into &[i8] string.
-                owner.name[0..name_bytes.len()].copy_from_slice(unsafe { &*(name_bytes as *const [u8] as *const [i8]) });
+                owner.name[0..name_bytes.len()]
+                    .copy_from_slice(unsafe { &*(name_bytes as *const [u8] as *const [i8]) });
                 // Safety: foreign function.
                 let ret = unsafe { dpdk_sys::rte_eth_dev_owner_set(port_id, &owner) };
                 assert_eq!(ret, 0);
@@ -972,8 +1005,9 @@ impl Drop for EalInner {
     fn drop(&mut self) {
         // Safety: foriegn function (safe unless there is a bug)
         unsafe {
-            for mpool in self.shared.get_mut().unwrap().mpool_free_list.drain(..) {
-                dpdk_sys::rte_mempool_free(mpool.as_ptr());
+            for gc_req in self.shared.get_mut().unwrap().gc_reqs.drain(..) {
+                assert_eq!((gc_req.check)(), true);
+                (gc_req.free)();
             }
 
             let ret = dpdk_sys::rte_eal_cleanup();

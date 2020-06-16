@@ -10,19 +10,9 @@ use dpdk::eal::*;
 use log::{debug, info};
 use std::env;
 
-fn sender(eal: Eal, tx_queue: TxQ) {
-    eal.delay_us_sleep(2_000_000);
+fn sender(eal: Eal, mpool: MPool, tx_queue: TxQ) {
     let tx_port = tx_queue.port();
     info!("Start TX from {:?}", tx_port.mac_addr());
-
-    // Create a `MPool` to create packets.
-    let mpool = eal.create_mpool(
-        format!("tx_pool_for_core_0"),
-        DEFAULT_RX_POOL_SIZE,
-        DEFAULT_RX_PER_CORE_CACHE,
-        DEFAULT_PACKET_DATA_LENGTH,
-        Some(tx_port.socket_id()),
-    );
 
     let mut pkts = ArrayVec::<[Packet; DEFAULT_TX_BURST]>::new();
     // Safety: packet is created and transmitted before `mpool` is destroyed.
@@ -52,19 +42,25 @@ fn sender(eal: Eal, tx_queue: TxQ) {
     }
     // Send packet
     tx_queue.tx(&mut pkts);
-    eal.delay_us_sleep(2_000_000);
+
+    // Wait for pkts to be transmitted
+    while tx_port.get_stat().opackets as usize > DEFAULT_TX_BURST {
+        eal.pause();
+    }
+
+    info!("TX finished. {:?}", tx_port.get_stat());
 
     // Safety: mpool must not be deallocated before TxQ is destroyed.
 }
 
 fn receiver(eal: Eal, rx_queue: RxQ) {
-    eal.delay_us_sleep(2_000_000);
     let rx_port = rx_queue.port();
-
-    // We will try to collect every TX packets. Thus, we use TX_BURST.
-    let mut pkts = ArrayVec::<[Packet; DEFAULT_TX_BURST]>::new();
-
     info!("RX started at {:?}", rx_port.mac_addr());
+
+    // We will try to collect every TX packets.
+    // We will collect all sent packets and additional background packets.
+    // Thus we need 2 * TX_BURST to collect everything.
+    let mut pkts = ArrayVec::<[Packet; DEFAULT_TX_BURST * 2]>::new();
     while pkts.len() < DEFAULT_TX_BURST {
         rx_queue.rx(&mut pkts);
         eal.pause();
@@ -72,6 +68,7 @@ fn receiver(eal: Eal, rx_queue: RxQ) {
     info!("RX finished. {:?}", rx_port.get_stat());
 }
 
+/// Note: this test function only works with `sudo target/debug/dpdk_test -c 1`
 fn main() -> Result<()> {
     simple_logger::init().unwrap();
     let mut args: Vec<String> = env::args().collect();
@@ -79,6 +76,15 @@ fn main() -> Result<()> {
     debug!("TSC Hz: {}", eal.get_tsc_hz());
     debug!("TSC Cycles: {}", eal.get_tsc_cycles());
     debug!("Random: {}", eal.rand());
+
+    // Create a `MPool` to create packets.
+    let default_mpool = eal.create_mpool(
+        "default_tx_pool",
+        DEFAULT_RX_POOL_SIZE,
+        DEFAULT_RX_PER_CORE_CACHE,
+        DEFAULT_PACKET_DATA_LENGTH,
+        None,
+    );
 
     let threads = eal
         .setup(Affinity::Full, Affinity::Full)?
@@ -88,17 +94,11 @@ fn main() -> Result<()> {
                 // Core 0 action: TX packets to txq[0]
                 0 => {
                     let local_eal = eal.clone();
+                    let local_mpool = default_mpool.clone();
                     let txq0 = txs[0].clone();
-                    lcore.launch(|| {
-                        sender(local_eal, txq0);
-                        true
-                    })
-                }
-                // Core 1 action: RX packets from rxq[1]
-                1 => {
-                    let local_eal = eal.clone();
                     let rxq1 = rxs[1].clone();
                     lcore.launch(|| {
+                        sender(local_eal.clone(), local_mpool, txq0);
                         receiver(local_eal, rxq1);
                         true
                     })
