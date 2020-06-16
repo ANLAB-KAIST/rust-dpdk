@@ -334,7 +334,7 @@ impl MPool {
         })
     }
 
-    /// Allocate `Packet`s to fill the remaining capacity of the given `ArrayVec`.
+    /// Allocate packets and fill them in the remaining capacity of the given `ArrayVec`.
     ///
     /// # Safety
     ///
@@ -744,9 +744,7 @@ impl Eal {
                 let name_cstring = CString::new(owner_name).unwrap();
                 let name_bytes = name_cstring.as_bytes_with_nul();
                 // Safety: converting &[u8] string into &[i8] string.
-                // TODO 다음 clippy warning을 어떻게 봐야 할 지 모르겠습니다.
-                // help: try: `&*(name_bytes as *const [u8] as *const [i8])`
-                owner.name[0..name_bytes.len()].copy_from_slice(unsafe { transmute(name_bytes) });
+                owner.name[0..name_bytes.len()].copy_from_slice(unsafe { &*(name_bytes as *const [u8] as *const [i8]) });
                 // Safety: foreign function.
                 let ret = unsafe { dpdk_sys::rte_eth_dev_owner_set(port_id, &owner) };
                 assert_eq!(ret, 0);
