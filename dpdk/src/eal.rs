@@ -28,13 +28,19 @@ pub const DEFAULT_TX_BURST: usize = 32;
 struct EalGlobalInner {
     // Whether `setup` has been successfully invoked.
     setup_initialized: bool,
+    mpool_free_list: Vec<NonNull<dpdk_sys::rte_mempool>>,
 } // TODO Remove this if unnecessary
+
+// Safety: rte_mempool is thread-safe.
+unsafe impl Send for EalGlobalInner {}
+unsafe impl Sync for EalGlobalInner {}
 
 impl Default for EalGlobalInner {
     #[inline]
     fn default() -> Self {
         Self {
             setup_initialized: false,
+            mpool_free_list: Default::default(),
         }
     }
 }
@@ -278,7 +284,11 @@ pub struct MPool {
     inner: Arc<MPoolInner>,
 }
 
-/// Note: this structure must be able to support `MaybeUninit::zeroed().assume_init()`.
+/// FPS-specific private metadata.
+///
+/// DPDK's mempool will reserve this structure for every `MBuf` instance.
+/// Note: DPDK will initialize this structure via `memset(.., 0, ..)`.
+/// i.e. `MaybeUninit.zeroed().assume_init()` must be always safe.
 #[derive(Debug)]
 struct MPoolPriv {}
 
@@ -297,56 +307,17 @@ unsafe impl Sync for MPoolInner {}
 impl Drop for MPoolInner {
     #[inline]
     fn drop(&mut self) {
-        // Safety: foreign function.
-        unsafe { dpdk_sys::rte_mempool_free(self.ptr.as_ptr()) };
+        // Note: deferred free via Eal
+        self.eal
+            .shared
+            .lock()
+            .unwrap()
+            .mpool_free_list
+            .push(self.ptr.clone());
     }
 }
 
 impl MPool {
-    /// Create a new `MPool`.  Note: Pool name must be globally unique.
-    ///
-    /// @param n The number of elements in the mbuf pool.
-    ///
-    /// @param cache_size Size of the per-core object cache.
-    ///
-    /// @param data_room_size Size of data buffer in each mbuf, including RTE_PKTMBUF_HEADROOM.
-    ///
-    /// @param socket_id The socket identifier where the memory should be allocated. The value can
-    /// be `None` (corresponds to DPDK's *SOCKET_ID_ANY*) if there is no NUMA constraint for the reserved zone.
-    #[inline]
-    pub fn new<S: AsRef<str>>(
-        eal: &Eal,
-        name: S,
-        n: usize,
-        cache_size: usize,
-        data_room_size: usize,
-        socket_id: Option<SocketId>,
-    ) -> Self {
-        let pool_name = CString::new(name.as_ref()).unwrap();
-
-        // Safety: foreign function.
-        let ptr = unsafe {
-            dpdk_sys::rte_pktmbuf_pool_create(
-                pool_name.into_bytes_with_nul().as_ptr() as *mut i8,
-                n.try_into().unwrap(),
-                cache_size as u32,
-                (((size_of::<MPoolPriv>() + 7) / 8) * 8) as u16,
-                data_room_size.try_into().unwrap(),
-                socket_id
-                    .map(|x| x.0 as i32)
-                    .unwrap_or(dpdk_sys::SOCKET_ID_ANY),
-            )
-        };
-        // The pointer to the new allocated mempool, on success. NULL on error with rte_errno set appropriately.
-        // https://doc.dpdk.org/api/rte__mbuf_8h.html
-        MPool {
-            inner: Arc::new(MPoolInner {
-                ptr: NonNull::new(ptr).unwrap(),
-                eal: eal.inner.clone(),
-            }),
-        }
-    }
-
     /// Allocate a `Packet` from the pool.
     ///
     /// # Safety
@@ -403,7 +374,7 @@ pub struct Packet {
 impl Packet {
     /// Read data_len field
     #[inline]
-    pub fn length(&self) -> usize {
+    pub fn len(&self) -> usize {
         unsafe { self.ptr.as_ref().data_len }.into()
     }
 
@@ -429,20 +400,6 @@ impl Packet {
         unsafe { &mut *(dpdk_sys::rte_mbuf_to_priv(self.ptr.as_ptr()) as *mut MPoolPriv) }
     }
 
-    /// Get raw buffer regardless of current packet length
-    #[inline]
-    pub fn buffer_mut(&mut self) -> &mut [u8] {
-        unsafe {
-            let mbuf_ptr = self.ptr.as_ptr();
-            slice::from_raw_parts_mut(
-                (*mbuf_ptr)
-                    .buf_addr
-                    .offset((*mbuf_ptr).data_off.try_into().unwrap()) as *mut u8,
-                (*mbuf_ptr).buf_len.into(),
-            )
-        }
-    }
-
     /// Read pkt_len field
     #[inline]
     pub fn buffer(&self) -> &[u8] {
@@ -457,9 +414,23 @@ impl Packet {
         }
     }
 
+    /// Get raw buffer regardless of current packet length
+    #[inline]
+    pub fn buffer_mut(&mut self) -> &mut [u8] {
+        unsafe {
+            let mbuf_ptr = self.ptr.as_ptr();
+            slice::from_raw_parts_mut(
+                (*mbuf_ptr)
+                    .buf_addr
+                    .offset((*mbuf_ptr).data_off.try_into().unwrap()) as *mut u8,
+                (*mbuf_ptr).buf_len.into(),
+            )
+        }
+    }
+
     /// Change the packet length
     #[inline]
-    pub fn set_length(&mut self, size: usize) {
+    pub fn set_len(&mut self, size: usize) {
         // Safety: buffer boundary is guarded by the assert statement.
         unsafe {
             let mbuf_ptr = self.ptr.as_ptr();
@@ -472,13 +443,13 @@ impl Packet {
     /// Get read-only data bound to current packet length
     #[inline]
     pub fn data(&self) -> &[u8] {
-        &self.buffer()[0..self.length()]
+        &self.buffer()[0..self.len()]
     }
 
     /// Get read-only data bound to current packet length
     #[inline]
     pub fn data_mut(&mut self) -> &mut [u8] {
-        let len = self.length();
+        let len = self.len();
         &mut self.buffer_mut()[0..len]
     }
 }
@@ -659,6 +630,51 @@ impl Eal {
         })
     }
 
+    /// Create a new `MPool`.  Note: Pool name must be globally unique.
+    ///
+    /// @param n The number of elements in the mbuf pool.
+    ///
+    /// @param cache_size Size of the per-core object cache.
+    ///
+    /// @param data_room_size Size of data buffer in each mbuf, including RTE_PKTMBUF_HEADROOM.
+    ///
+    /// @param socket_id The socket identifier where the memory should be allocated. The value can
+    /// be `None` (corresponds to DPDK's *SOCKET_ID_ANY*) if there is no NUMA constraint for the reserved zone.
+    #[inline]
+    pub fn create_mpool<S: AsRef<str>>(
+        &self,
+        name: S,
+        n: usize,
+        cache_size: usize,
+        data_room_size: usize,
+        socket_id: Option<SocketId>,
+    ) -> MPool {
+        let pool_name = CString::new(name.as_ref()).unwrap();
+
+        // Safety: foreign function.
+        let ptr = unsafe {
+            dpdk_sys::rte_pktmbuf_pool_create(
+                pool_name.into_bytes_with_nul().as_ptr() as *mut i8,
+                n.try_into().unwrap(),
+                cache_size as u32,
+                (((size_of::<MPoolPriv>() + 7) / 8) * 8) as u16,
+                data_room_size.try_into().unwrap(),
+                socket_id
+                    .map(|x| x.0 as i32)
+                    .unwrap_or(dpdk_sys::SOCKET_ID_ANY),
+            )
+        };
+
+        let inner = Arc::new(MPoolInner {
+            ptr: NonNull::new(ptr).unwrap(),
+            eal: self.inner.clone(),
+        });
+
+        // The pointer to the new allocated mempool, on success. NULL on error with rte_errno set appropriately.
+        // https://doc.dpdk.org/api/rte__mbuf_8h.html
+        MPool { inner }
+    }
+
     /// Setup per-core Rx queues and Tx queues according to the given affinity.  Currently, this
     /// must be called once for the whole program. Otherwise it will return an error code.  Returns
     /// array of `(logical core id, assigned rx queues, assigned tx queues)` on success.
@@ -719,7 +735,7 @@ impl Eal {
                 let ret = unsafe { dpdk_sys::rte_eth_dev_owner_new(&mut owner_id) };
                 assert_eq!(ret, 0);
 
-                let mut owner_structure = dpdk_sys::rte_eth_dev_owner {
+                let mut owner = dpdk_sys::rte_eth_dev_owner {
                     id: owner_id,
                     // Safety: `c_char` array can accept zeroed data.
                     name: unsafe { MaybeUninit::zeroed().assume_init() },
@@ -730,10 +746,9 @@ impl Eal {
                 // Safety: converting &[u8] string into &[i8] string.
                 // TODO 다음 clippy warning을 어떻게 봐야 할 지 모르겠습니다.
                 // help: try: `&*(name_bytes as *const [u8] as *const [i8])`
-                owner_structure.name[0..name_bytes.len()]
-                    .copy_from_slice(unsafe { transmute(name_bytes) });
+                owner.name[0..name_bytes.len()].copy_from_slice(unsafe { transmute(name_bytes) });
                 // Safety: foreign function.
-                let ret = unsafe { dpdk_sys::rte_eth_dev_owner_set(port_id, &owner_structure) };
+                let ret = unsafe { dpdk_sys::rte_eth_dev_owner_set(port_id, &owner) };
                 assert_eq!(ret, 0);
 
                 Port {
@@ -827,10 +842,8 @@ impl Eal {
             // For each rx core, configure RxQ.
             for (rxq_idx, rx_lcore) in rx_lcores.into_iter().enumerate() {
                 // Create a `MPool` dedicated for for each RxQ.
-                let pool_name = format!("rxq_{}_{}_{}", MAGIC, port_id, rxq_idx);
-                let mpool = MPool::new(
-                    self,
-                    pool_name,
+                let mpool = self.create_mpool(
+                    format!("rxq_{}_{}_{}", MAGIC, port_id, rxq_idx),
                     DEFAULT_RX_POOL_SIZE,
                     DEFAULT_RX_PER_CORE_CACHE,
                     DEFAULT_PACKET_DATA_LENGTH,
@@ -961,6 +974,10 @@ impl Drop for EalInner {
     fn drop(&mut self) {
         // Safety: foriegn function (safe unless there is a bug)
         unsafe {
+            for mpool in self.shared.get_mut().unwrap().mpool_free_list.drain(..) {
+                dpdk_sys::rte_mempool_free(mpool.as_ptr());
+            }
+
             let ret = dpdk_sys::rte_eal_cleanup();
             if ret == -(dpdk_sys::ENOTSUP as i32) {
                 warn!("EAL cleanup is not implemented.");
