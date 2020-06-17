@@ -90,22 +90,20 @@ fn main() -> Result<()> {
         .setup(Affinity::Full, Affinity::Full)?
         .into_iter()
         .map(|(lcore, rxs, txs)| {
-            match lcore.into() {
-                // Core 0 action: TX packets to txq[0]
-                0 => {
-                    let local_eal = eal.clone();
-                    let local_mpool = default_mpool.clone();
-                    let txq0 = txs[0].clone();
-                    let rxq1 = rxs[1].clone();
-                    lcore.launch(|| {
-                        sender(local_eal.clone(), local_mpool, txq0);
-                        receiver(local_eal, rxq1);
+            let local_eal = eal.clone();
+            let local_mpool = default_mpool.clone();
+            lcore.launch(move || {
+                match lcore.into() {
+                    // Core 0 action: TX packets to txq[0]
+                    0 => {
+                        sender(local_eal.clone(), local_mpool, txs[0].clone());
+                        receiver(local_eal, rxs[1].clone());
                         true
-                    })
+                    }
+                    // Otherwise, do nothing
+                    _ => true,
                 }
-                // Otherwise, do nothing
-                _ => lcore.launch(|| true),
-            }
+            })
         })
         .collect::<Vec<_>>();
     let ret = threads.into_iter().map(|x| x.join().unwrap()).all(|x| x);

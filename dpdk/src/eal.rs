@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::fmt;
-use std::mem::{size_of, transmute, MaybeUninit};
+use std::mem::{size_of, MaybeUninit};
 use std::ptr::NonNull;
 use std::slice;
 use std::sync::{Arc, Mutex};
@@ -105,7 +105,8 @@ impl LCoreId {
     }
 
     /// Launch a thread pined to this core.
-    pub fn launch<F, T>(&self, f: F) -> thread::JoinHandle<T>
+    /// TODO: change it to crossbeam's `spawn` signature when we start to use crossbeam.
+    pub fn launch<F, T>(self, f: F) -> thread::JoinHandle<T>
     where
         F: FnOnce() -> T,
         F: Send + 'static,
@@ -213,9 +214,24 @@ impl Port {
                 obytes: dpdk_stat.obytes,
                 ierrors: dpdk_stat.ierrors,
                 oerrors: dpdk_stat.oerrors,
+                imissed: dpdk_stat.imissed,
+                rx_nombuf: dpdk_stat.rx_nombuf,
+                q_ipackets: dpdk_stat.q_ipackets,
+                q_opackets: dpdk_stat.q_opackets,
+                q_ibytes: dpdk_stat.q_ibytes,
+                q_obytes: dpdk_stat.q_obytes,
+                q_errors: dpdk_stat.q_errors,
             }
         } else {
             let prev_stat = self.inner.prev_stat.lock().unwrap();
+            fn subtract_array(x: [u64; 16], y: [u64; 16]) -> [u64; 16] {
+                let subtract_vals = x.iter().zip(y.iter()).map(|(x, y)| x - y);
+                let mut temp: [u64; 16] = Default::default();
+                for (ret, val) in (&mut temp).iter_mut().zip(subtract_vals) {
+                    *ret = val;
+                }
+                temp
+            }
             PortStat {
                 ipackets: dpdk_stat.ipackets - prev_stat.ipackets,
                 opackets: dpdk_stat.opackets - prev_stat.opackets,
@@ -223,6 +239,14 @@ impl Port {
                 obytes: dpdk_stat.obytes - prev_stat.obytes,
                 ierrors: dpdk_stat.ierrors - prev_stat.ierrors,
                 oerrors: dpdk_stat.oerrors - prev_stat.oerrors,
+
+                imissed: dpdk_stat.imissed - prev_stat.imissed,
+                rx_nombuf: dpdk_stat.rx_nombuf - prev_stat.rx_nombuf,
+                q_ipackets: subtract_array(dpdk_stat.q_ipackets, prev_stat.q_ipackets),
+                q_opackets: subtract_array(dpdk_stat.q_opackets, prev_stat.q_opackets),
+                q_ibytes: subtract_array(dpdk_stat.q_ibytes, prev_stat.q_ibytes),
+                q_obytes: subtract_array(dpdk_stat.q_obytes, prev_stat.q_obytes),
+                q_errors: subtract_array(dpdk_stat.q_errors, prev_stat.q_errors),
             }
         }
     }
@@ -253,21 +277,7 @@ impl Port {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct PortStat {
-    #[doc = "< Total number of successfully received packets."]
-    pub ipackets: u64,
-    #[doc = "< Total number of successfully transmitted packets."]
-    pub opackets: u64,
-    #[doc = "< Total number of successfully received bytes."]
-    pub ibytes: u64,
-    #[doc = "< Total number of successfully transmitted bytes."]
-    pub obytes: u64,
-    #[doc = "< Total number of erroneous received packets."]
-    pub ierrors: u64,
-    #[doc = "< Total number of failed transmitted packets."]
-    pub oerrors: u64,
-}
+pub use dpdk_sys::rte_eth_stats as PortStat;
 
 #[derive(Debug)]
 struct PortInner {
@@ -380,7 +390,7 @@ impl MPool {
         // Safety: manual arrayvec manipulation.
         // `alloc_bulk` is temporarily unsafe. Leaving this unsafe block.
         unsafe {
-            let pkt_buffer: *mut *mut dpdk_sys::rte_mbuf = transmute(buffer.as_mut_ptr());
+            let pkt_buffer = buffer.as_mut_ptr() as *mut *mut dpdk_sys::rte_mbuf;
             let ret = dpdk_sys::rte_pktmbuf_alloc_bulk(
                 self.inner.ptr.as_ptr(),
                 pkt_buffer.add(current_offset),
@@ -392,7 +402,7 @@ impl MPool {
                 return true;
             }
         }
-        return false;
+        false
     }
 }
 
@@ -404,6 +414,12 @@ pub struct Packet {
 }
 
 impl Packet {
+    /// Returns whether `data_len` is zero.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Read data_len field
     #[inline]
     pub fn len(&self) -> usize {
@@ -787,7 +803,8 @@ impl Eal {
                         port_id,
                         owner_id,
                         has_stats_reset: true,
-                        prev_stat: Mutex::new(Default::default()),
+                        // Safety: PortStat allows zeroed structure.
+                        prev_stat: Mutex::new(unsafe { MaybeUninit::zeroed().assume_init() }),
                         eal: self.inner.clone(),
                     }),
                 }
