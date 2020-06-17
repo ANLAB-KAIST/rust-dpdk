@@ -32,7 +32,7 @@ struct EalGlobalInner {
     // Each req tries garbage collection and returns true on success.
     // (e.g. `try_free`).
     // TODO: periodically do cleanup.
-    gc_reqs: Vec<Box<dyn Fn() -> bool>>,
+    gc_reqs: Vec<Box<dyn FnMut() -> bool>>,
 } // TODO Remove this if unnecessary
 
 impl fmt::Debug for EalGlobalInner {
@@ -675,8 +675,8 @@ impl Eal {
 
     /// Create a new `MPool`.
     ///
-    /// Note: Pool name must be globally unique.
-    /// Otherwise, DPDK API will return an error code.
+    /// # Panic
+    /// Pool name must be globally unique, otherwise it will panic.
     ///
     /// @param n The number of elements in the mbuf pool.
     ///
@@ -685,7 +685,8 @@ impl Eal {
     /// @param data_room_size Size of data buffer in each mbuf, including RTE_PKTMBUF_HEADROOM.
     ///
     /// @param socket_id The socket identifier where the memory should be allocated. The value can
-    /// be `None` (corresponds to DPDK's *SOCKET_ID_ANY*) if there is no NUMA constraint for the reserved zone.
+    /// be `None` (corresponds to DPDK's *SOCKET_ID_ANY*) if there is no NUMA constraint for the
+    /// reserved zone.
     #[inline]
     pub fn create_mpool<S: AsRef<str>>(
         &self,
@@ -712,7 +713,7 @@ impl Eal {
         };
 
         let inner = Arc::new(MPoolInner {
-            ptr: NonNull::new(ptr).unwrap(),
+            ptr: NonNull::new(ptr).unwrap(), // will panic if the given name is not unique.
             eal: self.inner.clone(),
         });
 
@@ -1020,7 +1021,7 @@ impl Drop for EalInner {
     fn drop(&mut self) {
         // Safety: foriegn function (safe unless there is a bug)
         unsafe {
-            for gc_req in self.shared.get_mut().unwrap().gc_reqs.drain(..) {
+            for mut gc_req in self.shared.get_mut().unwrap().gc_reqs.drain(..) {
                 let ret = gc_req();
                 assert_eq!(ret, true);
             }
