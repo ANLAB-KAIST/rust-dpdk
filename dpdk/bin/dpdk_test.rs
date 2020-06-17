@@ -61,8 +61,11 @@ fn receiver(eal: Eal, rx_queue: RxQ) {
     // We will collect all sent packets and additional background packets.
     // Thus we need 2 * TX_BURST to collect everything.
     let mut pkts = ArrayVec::<[Packet; DEFAULT_TX_BURST * 2]>::new();
-    while pkts.len() < DEFAULT_TX_BURST {
+    loop {
         rx_queue.rx(&mut pkts);
+        if pkts.len() >= DEFAULT_TX_BURST {
+            break;
+        }
         eal.pause();
     }
     info!("RX finished. {:?}", rx_port.get_stat());
