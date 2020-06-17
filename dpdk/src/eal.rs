@@ -24,27 +24,26 @@ pub const DEFAULT_PROMISC: bool = true;
 pub const DEFAULT_RX_BURST: usize = 32;
 pub const DEFAULT_TX_BURST: usize = 32;
 
-/// Request garbage collection.
-struct GcReq {
-    check: Box<dyn Fn() -> bool>,
-    free: Box<dyn Fn() -> ()>,
-}
-impl fmt::Debug for GcReq {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GcReq").finish()
-    }
-}
-
 /// Shared mutating states that all `Eal` instances share.
-#[derive(Debug)]
 struct EalGlobalInner {
     // Whether `setup` has been successfully invoked.
     setup_initialized: bool,
     // List of garbage collection requrests.
+    // Each req tries garbage collection and returns true on success.
+    // (e.g. `try_free`).
     // TODO: periodically do cleanup.
-    gc_reqs: Vec<GcReq>,
+    gc_reqs: Vec<Box<dyn Fn() -> bool>>,
 } // TODO Remove this if unnecessary
+
+impl fmt::Debug for EalGlobalInner {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EalGlobalInner")
+            .field("setup_initialized", &self.setup_initialized)
+            .field("gc_reqs (count)", &self.gc_reqs.len())
+            .finish()
+    }
+}
 
 // Safety: rte_mempool is thread-safe.
 unsafe impl Send for EalGlobalInner {}
@@ -335,26 +334,22 @@ impl Drop for MPoolInner {
         // Check whether the pool can be destroyed now.
         // Note: I am the only reference to the pool object.
         let move_ptr = self.ptr.as_ptr();
-        let check_full = Box::new(move || {
+        let try_free = Box::new(move || {
             // Safety: foreign function.
-            unsafe { dpdk_sys::rte_mempool_full(move_ptr) > 0 }
-        });
-        let free_pool = Box::new(move || {
-            // Safety: foreign function.
-            unsafe { dpdk_sys::rte_mempool_free(move_ptr) };
+            unsafe {
+                if dpdk_sys::rte_mempool_full(move_ptr) > 0 {
+                    dpdk_sys::rte_mempool_free(move_ptr);
+                    true
+                } else {
+                    false
+                }
+            }
         });
 
-        if check_full() {
-            // Case: no dangling mbuf
-            // Safety: foreign function.
-            free_pool();
-        } else {
+        if !try_free() {
             // Case: with dangling mbufs
             // Note: deferred free via Eal
-            self.eal.shared.lock().unwrap().gc_reqs.push(GcReq {
-                check: check_full,
-                free: free_pool,
-            });
+            self.eal.shared.lock().unwrap().gc_reqs.push(try_free);
         }
     }
 }
@@ -678,7 +673,10 @@ impl Eal {
         })
     }
 
-    /// Create a new `MPool`.  Note: Pool name must be globally unique.
+    /// Create a new `MPool`.
+    ///
+    /// Note: Pool name must be globally unique.
+    /// Otherwise, DPDK API will return an error code.
     ///
     /// @param n The number of elements in the mbuf pool.
     ///
@@ -1023,8 +1021,8 @@ impl Drop for EalInner {
         // Safety: foriegn function (safe unless there is a bug)
         unsafe {
             for gc_req in self.shared.get_mut().unwrap().gc_reqs.drain(..) {
-                assert_eq!((gc_req.check)(), true);
-                (gc_req.free)();
+                let ret = gc_req();
+                assert_eq!(ret, true);
             }
 
             let ret = dpdk_sys::rte_eal_cleanup();
