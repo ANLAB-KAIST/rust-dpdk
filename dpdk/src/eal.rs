@@ -24,6 +24,16 @@ pub const DEFAULT_PROMISC: bool = true;
 pub const DEFAULT_RX_BURST: usize = 32;
 pub const DEFAULT_TX_BURST: usize = 32;
 
+/// A garbage collection request.
+trait Garbage {
+    /// Try to do garbage collection for a certain resource.
+    /// Returns true if it succeeded to free an object.
+    ///
+    /// # Safety
+    /// `try_collect` must not be called after it returned `true`.
+    unsafe fn try_collect(&mut self) -> bool;
+}
+
 /// Shared mutating states that all `Eal` instances share.
 struct EalGlobalInner {
     // Whether `setup` has been successfully invoked.
@@ -32,7 +42,7 @@ struct EalGlobalInner {
     // Each req tries garbage collection and returns true on success.
     // (e.g. `try_free`).
     // TODO: periodically do cleanup.
-    gc_reqs: Vec<Box<dyn FnMut() -> bool>>,
+    garbages: Vec<Box<dyn Garbage>>,
 } // TODO Remove this if unnecessary
 
 impl fmt::Debug for EalGlobalInner {
@@ -40,7 +50,7 @@ impl fmt::Debug for EalGlobalInner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EalGlobalInner")
             .field("setup_initialized", &self.setup_initialized)
-            .field("gc_reqs (count)", &self.gc_reqs.len())
+            .field("garbages (count)", &self.garbages.len())
             .finish()
     }
 }
@@ -54,7 +64,7 @@ impl Default for EalGlobalInner {
     fn default() -> Self {
         Self {
             setup_initialized: false,
-            gc_reqs: Default::default(),
+            garbages: Default::default(),
         }
     }
 }
@@ -333,23 +343,25 @@ impl Drop for MPoolInner {
     fn drop(&mut self) {
         // Check whether the pool can be destroyed now.
         // Note: I am the only reference to the pool object.
-        let move_ptr = self.ptr.as_ptr();
-        let try_free = Box::new(move || {
-            // Safety: foreign function.
-            unsafe {
-                if dpdk_sys::rte_mempool_full(move_ptr) > 0 {
-                    dpdk_sys::rte_mempool_free(move_ptr);
+        struct MPoolGcReq {
+            ptr: NonNull<dpdk_sys::rte_mempool>,
+        }
+        impl Garbage for MPoolGcReq {
+            #[inline]
+            unsafe fn try_collect(&mut self) -> bool {
+                if dpdk_sys::rte_mempool_full(self.ptr.as_ptr()) > 0 {
+                    dpdk_sys::rte_mempool_free(self.ptr.as_ptr());
                     true
                 } else {
                     false
                 }
             }
-        });
-
-        if !try_free() {
+        }
+        let mut ret = Box::new(MPoolGcReq { ptr: self.ptr });
+        if !unsafe { ret.try_collect() } {
             // Case: with dangling mbufs
             // Note: deferred free via Eal
-            self.eal.shared.lock().unwrap().gc_reqs.push(try_free);
+            self.eal.shared.lock().unwrap().garbages.push(ret);
         }
     }
 }
@@ -1021,8 +1033,8 @@ impl Drop for EalInner {
     fn drop(&mut self) {
         // Safety: foriegn function (safe unless there is a bug)
         unsafe {
-            for mut gc_req in self.shared.get_mut().unwrap().gc_reqs.drain(..) {
-                let ret = gc_req();
+            for mut gc_req in self.shared.get_mut().unwrap().garbages.drain(..) {
+                let ret = gc_req.try_collect();
                 assert_eq!(ret, true);
             }
 
