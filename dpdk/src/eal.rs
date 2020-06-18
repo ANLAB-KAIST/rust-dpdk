@@ -357,11 +357,11 @@ impl Drop for MPoolInner {
                 }
             }
         }
-        let mut ret = Box::new(MPoolGcReq { ptr: self.ptr });
+        let mut ret = MPoolGcReq { ptr: self.ptr };
         if !unsafe { ret.try_collect() } {
             // Case: with dangling mbufs
             // Note: deferred free via Eal
-            self.eal.shared.lock().unwrap().garbages.push(ret);
+            self.eal.shared.lock().unwrap().garbages.push(Box::new(ret));
         }
     }
 }
