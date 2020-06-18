@@ -20,6 +20,8 @@ thiserror = "1"
 etrace = "1"
 log = "0.4"
 simple_logger = "1"
+anyhow = "1.0"
+arrayvec = "0.5"
 
 [lib]
 name = "dpdk"
