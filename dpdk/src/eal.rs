@@ -420,6 +420,9 @@ pub struct Packet {
     ptr: NonNull<dpdk_sys::rte_mbuf>,
 }
 
+unsafe impl Send for Packet {}
+unsafe impl Sync for Packet {}
+
 impl Packet {
     /// Returns whether `data_len` is zero.
     #[inline]
