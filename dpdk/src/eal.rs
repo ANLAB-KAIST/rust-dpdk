@@ -7,7 +7,7 @@ use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::fmt;
 use std::mem::{size_of, MaybeUninit};
-use std::ptr::NonNull;
+use std::ptr::{self, NonNull};
 use std::slice;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -635,7 +635,7 @@ impl Drop for TxQInner {
 
 impl TxQ {
     /// Try transmit packets in the given arrayvec buffer.
-    /// All packets in the buffer will be sent or be abandoned.
+    /// All packets in the buffer will be sent.
     #[inline]
     pub fn tx<A: Array<Item = Packet>>(&self, buffer: &mut ArrayVec<A>) {
         let current = buffer.len();
@@ -650,13 +650,11 @@ impl TxQ {
                 self.inner.queue_id,
                 pkt_buffer,
                 current as u16,
-            );
-            // We have to manually free unsent packets, or the arrayvec will be unstable.
-            for i in cnt as usize..current {
-                dpdk_sys::rte_pktmbuf_free(*(pkt_buffer.add(i)));
-            }
-            // Anyhow, all packets in the buffer is sent or destroyed.
-            buffer.set_len(0);
+            ) as usize;
+            // Remaining packets are moved to the beginning of the vector.
+            let remaining = current - cnt;
+            ptr::copy(pkt_buffer.add(cnt), pkt_buffer, remaining);
+            buffer.set_len(remaining);
         }
     }
 
