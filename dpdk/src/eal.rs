@@ -284,8 +284,29 @@ impl Port {
             prev_stat.oerrors = dpdk_stat.oerrors;
         }
     }
+
+    /// Get link status
+    /// Note: this function might block up to 9 seconds.
+    /// https://doc.dpdk.org/api/rte__ethdev_8h.html#a56200b0c25f3ecab5abe9bd2b647c215
+    #[inline]
+    fn _get_link(&self) -> LinkStatus {
+        // Safety: foreign function.
+        unsafe {
+            let mut temp = MaybeUninit::uninit();
+            let ret = dpdk_sys::rte_eth_link_get(self.inner.port_id, temp.as_mut_ptr());
+            assert_eq!(ret, 0);
+            temp.assume_init()
+        }
+    }
+
+    /// Returns true if link is up (connected), false if down.
+    #[inline]
+    pub fn is_link_up(&self) -> bool {
+        self._get_link().link_status() == dpdk_sys::ETH_LINK_UP as u16
+    }
 }
 
+use dpdk_sys::rte_eth_link as LinkStatus;
 pub use dpdk_sys::rte_eth_stats as PortStat;
 
 #[derive(Debug)]

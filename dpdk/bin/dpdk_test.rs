@@ -14,6 +14,12 @@ fn sender(eal: Eal, mpool: MPool, tx_queue: TxQ) {
     let tx_port = tx_queue.port();
     info!("Start TX from {:?}", tx_port.mac_addr());
 
+    // Wait for the link to be connected.
+    while !tx_port.is_link_up() {
+        eal.pause();
+    }
+    info!("Link is up {:?}", tx_port.mac_addr());
+
     let mut pkts = ArrayVec::<[Packet; DEFAULT_TX_BURST]>::new();
     // Safety: packet is created and transmitted before `mpool` is destroyed.
     unsafe { mpool.alloc_bulk(&mut pkts) };
