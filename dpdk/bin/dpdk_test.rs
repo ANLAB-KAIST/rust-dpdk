@@ -18,7 +18,7 @@ fn sender(eal: Eal, mpool: MPool, tx_queue: TxQ) {
     while !tx_port.is_link_up() {
         eal.pause();
     }
-    info!("Link is up {:?}", tx_port.mac_addr());
+    info!("TX Link is up {:?}", tx_port.mac_addr());
 
     let mut pkts = ArrayVec::<[Packet; DEFAULT_TX_BURST]>::new();
     // Safety: packet is created and transmitted before `mpool` is destroyed.
@@ -62,6 +62,12 @@ fn sender(eal: Eal, mpool: MPool, tx_queue: TxQ) {
 fn receiver(eal: Eal, rx_queue: RxQ) {
     let rx_port = rx_queue.port();
     info!("RX started at {:?}", rx_port.mac_addr());
+
+    // Wait for the link to be connected.
+    while !rx_port.is_link_up() {
+        eal.pause();
+    }
+    info!("RX Link is up {:?}", rx_port.mac_addr());
 
     // We will try to collect every TX packets.
     // We will collect all sent packets and additional background packets.
