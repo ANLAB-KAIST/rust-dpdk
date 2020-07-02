@@ -289,7 +289,7 @@ impl Port {
     /// Note: this function might block up to 9 seconds.
     /// https://doc.dpdk.org/api/rte__ethdev_8h.html#a56200b0c25f3ecab5abe9bd2b647c215
     #[inline]
-    fn _get_link(&self) -> LinkStatus {
+    fn get_link(&self) -> LinkStatus {
         // Safety: foreign function.
         unsafe {
             let mut temp = MaybeUninit::uninit();
@@ -302,7 +302,7 @@ impl Port {
     /// Returns true if link is up (connected), false if down.
     #[inline]
     pub fn is_link_up(&self) -> bool {
-        self._get_link().link_status() == dpdk_sys::ETH_LINK_UP as u16
+        self.get_link().link_status() == dpdk_sys::ETH_LINK_UP as u16
     }
 }
 
