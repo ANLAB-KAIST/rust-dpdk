@@ -7,7 +7,7 @@ use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::fmt;
 use std::mem::{size_of, MaybeUninit};
-use std::ptr::NonNull;
+use std::ptr::{self, NonNull};
 use std::slice;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -284,8 +284,29 @@ impl Port {
             prev_stat.oerrors = dpdk_stat.oerrors;
         }
     }
+
+    /// Get link status
+    /// Note: this function might block up to 9 seconds.
+    /// https://doc.dpdk.org/api/rte__ethdev_8h.html#a56200b0c25f3ecab5abe9bd2b647c215
+    #[inline]
+    fn get_link(&self) -> LinkStatus {
+        // Safety: foreign function.
+        unsafe {
+            let mut temp = MaybeUninit::uninit();
+            let ret = dpdk_sys::rte_eth_link_get(self.inner.port_id, temp.as_mut_ptr());
+            assert_eq!(ret, 0);
+            temp.assume_init()
+        }
+    }
+
+    /// Returns true if link is up (connected), false if down.
+    #[inline]
+    pub fn is_link_up(&self) -> bool {
+        self.get_link().link_status() == dpdk_sys::ETH_LINK_UP as u16
+    }
 }
 
+use dpdk_sys::rte_eth_link as LinkStatus;
 pub use dpdk_sys::rte_eth_stats as PortStat;
 
 #[derive(Debug)]
@@ -614,29 +635,36 @@ impl Drop for TxQInner {
 
 impl TxQ {
     /// Try transmit packets in the given arrayvec buffer.
-    /// All packets in the buffer will be sent or be abandoned.
+    /// All packets in the buffer will be sent.
     #[inline]
     pub fn tx<A: Array<Item = Packet>>(&self, buffer: &mut ArrayVec<A>) {
         let current = buffer.len();
         // Safety: this block is very dangerous.
-        unsafe {
-            // Get raw pointer of arrayvec
-            let pkt_buffer = buffer.as_mut_ptr() as *mut *mut dpdk_sys::rte_mbuf;
-            // Try transmit packets. It will return number of successfully transmitted packets.
-            // Successfully transmitted packets are automatically dropped by `rte_eth_tx_burst`.
-            let cnt = dpdk_sys::rte_eth_tx_burst(
+
+        // Get raw pointer of arrayvec
+        let pkt_buffer = buffer.as_mut_ptr() as *mut *mut dpdk_sys::rte_mbuf;
+
+        // Try transmit packets. It will return number of successfully transmitted packets.
+        // Successfully transmitted packets are automatically dropped by `rte_eth_tx_burst`.
+        // Safety: foreign function.
+        // Safety: `pkt_buffer` is safe to read till `pkt_buffer[current]`.
+        let cnt = unsafe {
+            dpdk_sys::rte_eth_tx_burst(
                 self.inner.port.inner.port_id,
                 self.inner.queue_id,
                 pkt_buffer,
                 current as u16,
-            );
-            // We have to manually free unsent packets, or the arrayvec will be unstable.
-            for i in cnt as usize..current {
-                dpdk_sys::rte_pktmbuf_free(*(pkt_buffer.add(i)));
-            }
-            // Anyhow, all packets in the buffer is sent or destroyed.
-            buffer.set_len(0);
-        }
+            ) as usize
+        };
+
+        // Remaining packets are moved to the beginning of the vector.
+        let remaining = current - cnt;
+        // Safety: pkt_buffer[cur...len] are unsent thus safe to be accessed.
+        // This line moves pkts at tail to the head of the array.
+        unsafe { ptr::copy(pkt_buffer.add(cnt), pkt_buffer, remaining) };
+
+        // Safety: headers are filled with unsent packets and it is safe to set the length.
+        unsafe { buffer.set_len(remaining) };
     }
 
     /// Make copies of MBufs and transmit them.
@@ -644,30 +672,37 @@ impl TxQ {
     #[inline]
     pub fn tx_cloned<A: Array<Item = Packet>>(&self, buffer: &ArrayVec<A>) {
         let current = buffer.len();
-        // Safety: this block is very dangerous.
-        unsafe {
-            // Pre-increase mbuf's refcnt.
-            // Note: `buffer: &ArrayVec` ensures that the content of packets never changes.
-            for pkt in buffer {
-                dpdk_sys::rte_pktmbuf_refcnt_update(pkt.ptr.as_ptr(), 1);
-            }
 
-            // Get raw pointer of arrayvec
-            let pkt_buffer = buffer.as_ptr() as *mut *mut dpdk_sys::rte_mbuf;
-            // Try transmit packets. It will return number of successfully transmitted packets.
-            // Successfully transmitted packets are automatically dropped by `rte_eth_tx_burst`.
-            let cnt = dpdk_sys::rte_eth_tx_burst(
+        for pkt in buffer {
+            // Safety: foreign function.
+            // Note: It does not cause memory leak as tx_burst decreases the reference count.
+            unsafe { dpdk_sys::rte_pktmbuf_refcnt_update(pkt.ptr.as_ptr(), 1) };
+        }
+
+        // Get raw pointer of arrayvec
+        let pkt_buffer = buffer.as_ptr() as *mut *mut dpdk_sys::rte_mbuf;
+
+        // Try transmit packets. It will return number of successfully transmitted packets.
+        // Successfully transmitted packets are automatically dropped by `rte_eth_tx_burst`.
+        //
+        // Safety: foreign function.
+        // Safety: `pkt_buffer` is safe to read till `pkt_buffer[current]`.
+        let cnt = unsafe {
+            dpdk_sys::rte_eth_tx_burst(
                 self.inner.port.inner.port_id,
                 self.inner.queue_id,
                 pkt_buffer,
                 current as u16,
-            );
-            // We have to manually free unsent packets, or some packets will leak.
-            for i in cnt as usize..current {
-                dpdk_sys::rte_pktmbuf_free(*(pkt_buffer.add(i)));
-            }
-            // As all mbuf's references are already increases, we do not have to free the arrayvec.
+            )
+        };
+
+        // We have to manually free unsent packets, or some packets will leak.
+        for i in cnt as usize..current {
+            // Safety: foreign function.
+            // Safety: pkt's refcount is already increased thus there is no use-after-free.
+            unsafe { dpdk_sys::rte_pktmbuf_free(*(pkt_buffer.add(i))) };
         }
+        // As all mbuf's references are already increases, we do not have to free the arrayvec.
     }
 
     /// Get port of this queue.
