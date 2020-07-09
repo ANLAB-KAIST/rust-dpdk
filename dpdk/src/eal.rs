@@ -345,7 +345,16 @@ pub struct MPool {
 /// Note: DPDK will initialize this structure via `memset(.., 0, ..)`.
 /// i.e. `MaybeUninit.zeroed().assume_init()` must be always safe.
 #[derive(Debug)]
-struct MPoolPriv {}
+struct MPoolPriv {
+    is_from_set: bool,
+    from_port_id: u16,
+    from_queue_id: u16,
+    is_to_set: bool,
+    to_port_id: u16,
+    to_queue_id: u16,
+    // For example, IP packet will read from data_offset 14.
+    data_offset: usize,
+}
 
 #[derive(Debug)]
 struct MPoolInner {
@@ -530,6 +539,18 @@ impl Packet {
     pub fn data_mut(&mut self) -> &mut [u8] {
         let len = self.len();
         &mut self.buffer_mut()[0..len]
+    }
+
+    /// Whether private metadata's `from` data is set.
+    #[inline]
+    pub fn is_from_set(&self) -> bool {
+        self.priv_data().is_from_set
+    }
+
+    /// Whether private metadata's `to` data is set.
+    #[inline]
+    pub fn is_to_set(&self) -> bool {
+        self.priv_data().is_to_set
     }
 }
 
