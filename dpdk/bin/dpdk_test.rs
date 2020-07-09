@@ -10,7 +10,16 @@ use dpdk::eal::*;
 use log::{debug, info};
 use std::env;
 
-fn sender(eal: Eal, mpool: MPool, tx_queue: TxQ) {
+#[derive(Debug, Clone, Copy)]
+struct TestPriv {
+    from_port: usize,
+    from_queue: usize,
+    to_port: usize,
+    to_queue: usize,
+}
+unsafe impl Zeroable for TestPriv {}
+
+fn sender(eal: Eal, mpool: MPool<TestPriv>, tx_queue: TxQ) {
     let tx_port = tx_queue.port();
     info!("Start TX from {:?}", tx_port.mac_addr());
 
@@ -20,9 +29,10 @@ fn sender(eal: Eal, mpool: MPool, tx_queue: TxQ) {
     }
     info!("TX Link is up {:?}", tx_port.mac_addr());
 
-    let mut pkts = ArrayVec::<[Packet; DEFAULT_TX_BURST]>::new();
+    let mut pkts = ArrayVec::<[Packet<TestPriv>; DEFAULT_TX_BURST]>::new();
     // Safety: packet is created and transmitted before `mpool` is destroyed.
     unsafe { mpool.alloc_bulk(&mut pkts) };
+    //pkts.iter().all(|pkt| pkt.pr)
 
     for pkt in &mut pkts {
         // Prepare toy arp request packets
@@ -59,7 +69,7 @@ fn sender(eal: Eal, mpool: MPool, tx_queue: TxQ) {
     // Safety: mpool must not be deallocated before TxQ is destroyed.
 }
 
-fn receiver(eal: Eal, rx_queue: RxQ) {
+fn receiver(eal: Eal, rx_queue: RxQ<TestPriv>) {
     let rx_port = rx_queue.port();
     info!("RX started at {:?}", rx_port.mac_addr());
 
@@ -72,7 +82,7 @@ fn receiver(eal: Eal, rx_queue: RxQ) {
     // We will try to collect every TX packets.
     // We will collect all sent packets and additional background packets.
     // Thus we need 2 * TX_BURST to collect everything.
-    let mut pkts = ArrayVec::<[Packet; DEFAULT_TX_BURST * 2]>::new();
+    let mut pkts = ArrayVec::<[Packet<TestPriv>; DEFAULT_TX_BURST * 2]>::new();
     loop {
         rx_queue.rx(&mut pkts);
         if pkts.len() >= DEFAULT_TX_BURST {

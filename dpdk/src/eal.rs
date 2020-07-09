@@ -1,4 +1,5 @@
 //! Wrapper for DPDK's environment abstraction layer (EAL).
+use std::marker::PhantomData;
 use arrayvec::*;
 use ffi;
 use log::{debug, info, warn};
@@ -333,33 +334,43 @@ impl Drop for PortInner {
     }
 }
 
-/// Abstract type for DPDK MPool
-#[derive(Debug, Clone)]
-pub struct MPool {
-    inner: Arc<MPoolInner>,
+/// Traits for `zeroable` structures.
+///
+/// Related issue: https://github.com/rust-lang/rfcs/issues/2626
+/// 
+/// DPDK provides customizable per-packet metadata. However, it is initialized via 
+/// `memset(.., 0, ..)`, and its destructor is not called.
+/// A structure must be safe from `MaybeUninit::zeroed().assume_init()` 
+/// and it must not implement `Drop` trait.
+pub unsafe trait Zeroable: Sized {
+    fn zeroed() -> Self {
+        // Safety: contraints from this trait.
+        unsafe { MaybeUninit::zeroed().assume_init() }
+    }
 }
 
-/// FPS-specific private metadata.
-///
-/// DPDK's mempool will reserve this structure for every `MBuf` instance.
-/// Note: DPDK will initialize this structure via `memset(.., 0, ..)`.
-/// i.e. `MaybeUninit.zeroed().assume_init()` must be always safe.
-#[derive(Debug)]
-struct MPoolPriv {}
+/// Abstract type for DPDK MPool
+#[derive(Debug, Clone)]
+pub struct MPool<MPoolPriv: Zeroable> {
+    inner: Arc<MPoolInner<MPoolPriv>>,
+}
+
+
 
 #[derive(Debug)]
-struct MPoolInner {
+struct MPoolInner<MPoolPriv: Zeroable> {
     ptr: NonNull<dpdk_sys::rte_mempool>,
     eal: Arc<EalInner>,
+    _phantom: PhantomData<MPoolPriv>
 }
 
 /// # Safety
 /// Mempools are thread-safe.
 /// https://doc.dpdk.org/guides/prog_guide/thread_safety_dpdk_functions.html
-unsafe impl Send for MPoolInner {}
-unsafe impl Sync for MPoolInner {}
+unsafe impl<MPoolPriv: Zeroable> Send for MPoolInner<MPoolPriv> {}
+unsafe impl<MPoolPriv: Zeroable> Sync for MPoolInner<MPoolPriv> {}
 
-impl Drop for MPoolInner {
+impl<MPoolPriv: Zeroable> Drop for MPoolInner<MPoolPriv> {
     #[inline]
     fn drop(&mut self) {
         // Check whether the pool can be destroyed now.
@@ -387,20 +398,21 @@ impl Drop for MPoolInner {
     }
 }
 
-impl MPool {
+impl<MPoolPriv: Zeroable> MPool<MPoolPriv> {
     /// Allocate a `Packet` from the pool.
     ///
     /// # Safety
     ///
     /// Returned item must not outlive this pool.
     #[inline]
-    pub unsafe fn alloc(&self) -> Option<Packet> {
+    pub unsafe fn alloc(&self) -> Option<Packet<MPoolPriv>> {
         // Safety: foreign function.
         // `alloc` is temporarily unsafe. Leaving this unsafe block.
         let pkt_ptr = unsafe { dpdk_sys::rte_pktmbuf_alloc(self.inner.ptr.as_ptr()) };
 
         Some(Packet {
             ptr: NonNull::new(pkt_ptr)?,
+            _phantom: PhantomData{}
         })
     }
 
@@ -410,7 +422,7 @@ impl MPool {
     ///
     /// Returned items must not outlive this pool.
     #[inline]
-    pub unsafe fn alloc_bulk<A: Array<Item = Packet>>(&self, buffer: &mut ArrayVec<A>) -> bool {
+    pub unsafe fn alloc_bulk<A: Array<Item = Packet<MPoolPriv>>>(&self, buffer: &mut ArrayVec<A>) -> bool {
         let current_offset = buffer.len();
         let capacity = buffer.capacity();
         let remaining = capacity - current_offset;
@@ -437,14 +449,15 @@ impl MPool {
 /// An owned reference to `Packet`.
 /// TODO Verify that `*mut Packet` can be transformed to `*mut *mut rte_mbuf`.
 #[derive(Debug)]
-pub struct Packet {
+pub struct Packet<MPoolPriv: Zeroable> {
     ptr: NonNull<dpdk_sys::rte_mbuf>,
+    _phantom: PhantomData<MPoolPriv>
 }
 
-unsafe impl Send for Packet {}
-unsafe impl Sync for Packet {}
+unsafe impl<MPoolPriv: Zeroable> Send for Packet<MPoolPriv> {}
+unsafe impl<MPoolPriv: Zeroable> Sync for Packet<MPoolPriv> {}
 
-impl Packet {
+impl<MPoolPriv: Zeroable> Packet<MPoolPriv> {
     /// Returns whether `data_len` is zero.
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -533,7 +546,7 @@ impl Packet {
     }
 }
 
-impl Drop for Packet {
+impl<MPoolPriv: Zeroable> Drop for Packet<MPoolPriv> {
     #[inline]
     fn drop(&mut self) {
         // Safety: foreign function.
@@ -547,19 +560,19 @@ impl Drop for Packet {
 ///
 /// TODO Support per-queue RX operations
 #[derive(Debug, Clone)]
-pub struct RxQ {
-    inner: Arc<RxQInner>,
+pub struct RxQ<MPoolPriv: Zeroable> {
+    inner: Arc<RxQInner<MPoolPriv>>,
 }
 
 /// Note: RxQ requires a dedicated mempool to receive incoming packets.
 #[derive(Debug)]
-struct RxQInner {
+struct RxQInner<MPoolPriv: Zeroable> {
     queue_id: u16,
     port: Port,
-    mpool: Arc<MPoolInner>,
+    mpool: Arc<MPoolInner<MPoolPriv>>,
 }
 
-impl Drop for RxQInner {
+impl<MPoolPriv: Zeroable> Drop for RxQInner<MPoolPriv> {
     #[inline]
     fn drop(&mut self) {
         // Safety: foreign function.
@@ -576,10 +589,10 @@ impl Drop for RxQInner {
     }
 }
 
-impl RxQ {
+impl<MPoolPriv: Zeroable> RxQ<MPoolPriv> {
     /// Receive packets and store it to the given arrayvec.
     #[inline]
-    pub fn rx<A: Array<Item = Packet>>(&self, buffer: &mut ArrayVec<A>) {
+    pub fn rx<A: Array<Item = Packet<MPoolPriv>>>(&self, buffer: &mut ArrayVec<A>) {
         let current = buffer.len();
         let remaining = buffer.capacity() - current;
         unsafe {
@@ -637,7 +650,7 @@ impl TxQ {
     /// Try transmit packets in the given arrayvec buffer.
     /// All packets in the buffer will be sent.
     #[inline]
-    pub fn tx<A: Array<Item = Packet>>(&self, buffer: &mut ArrayVec<A>) {
+    pub fn tx<MPoolPriv: Zeroable, A: Array<Item = Packet<MPoolPriv>>>(&self, buffer: &mut ArrayVec<A>) {
         let current = buffer.len();
         // Safety: this block is very dangerous.
 
@@ -670,7 +683,7 @@ impl TxQ {
     /// Make copies of MBufs and transmit them.
     /// All packets in the buffer will be sent or be abandoned.
     #[inline]
-    pub fn tx_cloned<A: Array<Item = Packet>>(&self, buffer: &ArrayVec<A>) {
+    pub fn tx_cloned<MPoolPriv: Zeroable, A: Array<Item = Packet<MPoolPriv>>>(&self, buffer: &ArrayVec<A>) {
         let current = buffer.len();
 
         for pkt in buffer {
@@ -738,14 +751,15 @@ impl Eal {
     /// be `None` (corresponds to DPDK's *SOCKET_ID_ANY*) if there is no NUMA constraint for the
     /// reserved zone.
     #[inline]
-    pub fn create_mpool<S: AsRef<str>>(
+    pub fn create_mpool<S: AsRef<str>, MPoolPriv: Zeroable>(
         &self,
         name: S,
         n: usize,
         cache_size: usize,
         data_room_size: usize,
         socket_id: Option<SocketId>,
-    ) -> MPool {
+    ) -> MPool<MPoolPriv
+    > {
         let pool_name = CString::new(name.as_ref()).unwrap();
 
         // Safety: foreign function.
@@ -765,6 +779,7 @@ impl Eal {
         let inner = Arc::new(MPoolInner {
             ptr: NonNull::new(ptr).unwrap(), // will panic if the given name is not unique.
             eal: self.inner.clone(),
+            _phantom: PhantomData{}
         });
 
         // The pointer to the new allocated mempool, on success. NULL on error with rte_errno set appropriately.
@@ -780,11 +795,11 @@ impl Eal {
     /// Note: we have clippy warning: complex return type.
     /// Note: we have clippy warning: cognitive complexity.
     #[inline]
-    pub fn setup(
+    pub fn setup<MPoolPriv: Zeroable>(
         &self,
         rx_affinity: Affinity,
         tx_affinity: Affinity,
-    ) -> Result<Vec<(LCoreId, Vec<RxQ>, Vec<TxQ>)>, ErrorCode> {
+    ) -> Result<Vec<(LCoreId, Vec<RxQ<MPoolPriv>>, Vec<TxQ>)>, ErrorCode> {
         // Acquire globally shared state and check whether already initialized.
         let mut shared_mut = self.inner.shared.lock().unwrap();
         if shared_mut.setup_initialized {
