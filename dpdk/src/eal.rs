@@ -1,5 +1,4 @@
 //! Wrapper for DPDK's environment abstraction layer (EAL).
-use std::marker::PhantomData;
 use arrayvec::*;
 use ffi;
 use log::{debug, info, warn};
@@ -7,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::ffi::CString;
 use std::fmt;
+use std::marker::PhantomData;
 use std::mem::{size_of, MaybeUninit};
 use std::ptr::{self, NonNull};
 use std::slice;
@@ -337,10 +337,10 @@ impl Drop for PortInner {
 /// Traits for `zeroable` structures.
 ///
 /// Related issue: https://github.com/rust-lang/rfcs/issues/2626
-/// 
-/// DPDK provides customizable per-packet metadata. However, it is initialized via 
+///
+/// DPDK provides customizable per-packet metadata. However, it is initialized via
 /// `memset(.., 0, ..)`, and its destructor is not called.
-/// A structure must be safe from `MaybeUninit::zeroed().assume_init()` 
+/// A structure must be safe from `MaybeUninit::zeroed().assume_init()`
 /// and it must not implement `Drop` trait.
 pub unsafe trait Zeroable: Sized {
     fn zeroed() -> Self {
@@ -355,13 +355,11 @@ pub struct MPool<MPoolPriv: Zeroable> {
     inner: Arc<MPoolInner<MPoolPriv>>,
 }
 
-
-
 #[derive(Debug)]
 struct MPoolInner<MPoolPriv: Zeroable> {
     ptr: NonNull<dpdk_sys::rte_mempool>,
     eal: Arc<EalInner>,
-    _phantom: PhantomData<MPoolPriv>
+    _phantom: PhantomData<MPoolPriv>,
 }
 
 /// # Safety
@@ -412,7 +410,7 @@ impl<MPoolPriv: Zeroable> MPool<MPoolPriv> {
 
         Some(Packet {
             ptr: NonNull::new(pkt_ptr)?,
-            _phantom: PhantomData{}
+            _phantom: PhantomData {},
         })
     }
 
@@ -422,7 +420,10 @@ impl<MPoolPriv: Zeroable> MPool<MPoolPriv> {
     ///
     /// Returned items must not outlive this pool.
     #[inline]
-    pub unsafe fn alloc_bulk<A: Array<Item = Packet<MPoolPriv>>>(&self, buffer: &mut ArrayVec<A>) -> bool {
+    pub unsafe fn alloc_bulk<A: Array<Item = Packet<MPoolPriv>>>(
+        &self,
+        buffer: &mut ArrayVec<A>,
+    ) -> bool {
         let current_offset = buffer.len();
         let capacity = buffer.capacity();
         let remaining = capacity - current_offset;
@@ -451,7 +452,7 @@ impl<MPoolPriv: Zeroable> MPool<MPoolPriv> {
 #[derive(Debug)]
 pub struct Packet<MPoolPriv: Zeroable> {
     ptr: NonNull<dpdk_sys::rte_mbuf>,
-    _phantom: PhantomData<MPoolPriv>
+    _phantom: PhantomData<MPoolPriv>,
 }
 
 unsafe impl<MPoolPriv: Zeroable> Send for Packet<MPoolPriv> {}
@@ -650,7 +651,10 @@ impl TxQ {
     /// Try transmit packets in the given arrayvec buffer.
     /// All packets in the buffer will be sent.
     #[inline]
-    pub fn tx<MPoolPriv: Zeroable, A: Array<Item = Packet<MPoolPriv>>>(&self, buffer: &mut ArrayVec<A>) {
+    pub fn tx<MPoolPriv: Zeroable, A: Array<Item = Packet<MPoolPriv>>>(
+        &self,
+        buffer: &mut ArrayVec<A>,
+    ) {
         let current = buffer.len();
         // Safety: this block is very dangerous.
 
@@ -683,7 +687,10 @@ impl TxQ {
     /// Make copies of MBufs and transmit them.
     /// All packets in the buffer will be sent or be abandoned.
     #[inline]
-    pub fn tx_cloned<MPoolPriv: Zeroable, A: Array<Item = Packet<MPoolPriv>>>(&self, buffer: &ArrayVec<A>) {
+    pub fn tx_cloned<MPoolPriv: Zeroable, A: Array<Item = Packet<MPoolPriv>>>(
+        &self,
+        buffer: &ArrayVec<A>,
+    ) {
         let current = buffer.len();
 
         for pkt in buffer {
@@ -758,8 +765,7 @@ impl Eal {
         cache_size: usize,
         data_room_size: usize,
         socket_id: Option<SocketId>,
-    ) -> MPool<MPoolPriv
-    > {
+    ) -> MPool<MPoolPriv> {
         let pool_name = CString::new(name.as_ref()).unwrap();
 
         // Safety: foreign function.
@@ -779,7 +785,7 @@ impl Eal {
         let inner = Arc::new(MPoolInner {
             ptr: NonNull::new(ptr).unwrap(), // will panic if the given name is not unique.
             eal: self.inner.clone(),
-            _phantom: PhantomData{}
+            _phantom: PhantomData {},
         });
 
         // The pointer to the new allocated mempool, on success. NULL on error with rte_errno set appropriately.
