@@ -10,12 +10,17 @@ use dpdk::eal::*;
 use log::{debug, info};
 use std::env;
 
+/// Private metadata structure for this test case.
+///
+/// Note: we need to use `is_xx_set` because we cannot safely use `Option<T>` with `zeroed()`.
 #[derive(Debug, Clone, Copy)]
 struct TestPriv {
-    from_port: usize,
-    from_queue: usize,
-    to_port: usize,
-    to_queue: usize,
+    is_from_set: bool,
+    from_port: u16,
+    from_queue: u16,
+    is_to_set: bool,
+    to_port: u16,
+    to_queue: u16,
 }
 unsafe impl Zeroable for TestPriv {}
 
@@ -32,7 +37,11 @@ fn sender(eal: Eal, mpool: MPool<TestPriv>, tx_queue: TxQ) {
     let mut pkts = ArrayVec::<[Packet<TestPriv>; DEFAULT_TX_BURST]>::new();
     // Safety: packet is created and transmitted before `mpool` is destroyed.
     unsafe { mpool.alloc_bulk(&mut pkts) };
-    //pkts.iter().all(|pkt| pkt.pr)
+    pkts.iter_mut().for_each(|pkt| {
+        pkt.priv_data_mut().to_port = tx_port.port_id();
+        pkt.priv_data_mut().to_queue = tx_queue.queue_id();
+        pkt.priv_data_mut().is_to_set = true;
+    });
 
     for pkt in &mut pkts {
         // Prepare toy arp request packets
@@ -55,7 +64,12 @@ fn sender(eal: Eal, mpool: MPool<TestPriv>, tx_queue: TxQ) {
         pkt_buf[38..42].copy_from_slice(&[0x10, 0x00, 0x00, 0x03]); // THA (10.0.0.3)
 
         pkt.set_len(42);
+
+        assert_eq!(pkt.priv_data().is_to_set, true);
+        assert_eq!(pkt.priv_data().to_port, tx_port.port_id());
+        assert_eq!(pkt.priv_data().to_queue, tx_queue.queue_id());
     }
+
     // Send packet
     tx_queue.tx(&mut pkts);
 

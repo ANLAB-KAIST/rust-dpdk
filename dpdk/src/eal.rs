@@ -185,6 +185,12 @@ impl TryFrom<i32> for ErrorCode {
 }
 
 impl Port {
+    /// Returns current port index.
+    #[inline]
+    pub fn port_id(&self) -> u16 {
+        self.inner.port_id
+    }
+
     /// Returns NUMA node of current port.
     #[inline]
     pub fn socket_id(&self) -> SocketId {
@@ -480,7 +486,7 @@ impl<MPoolPriv: Zeroable> Packet<MPoolPriv> {
     /// Read priv_data field
     /// TODO we will save non-public, FPS-specific metadata to `MPoolPriv`.
     #[inline]
-    fn priv_data(&self) -> &MPoolPriv {
+    pub fn priv_data(&self) -> &MPoolPriv {
         // Safety: All MPool instances have reserved private data for `MPoolPriv`.
         unsafe { &*(dpdk_sys::rte_mbuf_to_priv(self.ptr.as_ptr()) as *const MPoolPriv) }
     }
@@ -488,7 +494,7 @@ impl<MPoolPriv: Zeroable> Packet<MPoolPriv> {
     /// Read/Write priv_data field
     /// TODO we will save non-public, FPS-specific metadata to `MPoolPriv`.
     #[inline]
-    fn priv_data_mut(&mut self) -> &mut MPoolPriv {
+    pub fn priv_data_mut(&mut self) -> &mut MPoolPriv {
         // Safety: All MPool instances have reserved private data for `MPoolPriv`.
         unsafe { &mut *(dpdk_sys::rte_mbuf_to_priv(self.ptr.as_ptr()) as *mut MPoolPriv) }
     }
@@ -591,6 +597,12 @@ impl<MPoolPriv: Zeroable> Drop for RxQInner<MPoolPriv> {
 }
 
 impl<MPoolPriv: Zeroable> RxQ<MPoolPriv> {
+    /// Returns current queue index.
+    #[inline]
+    pub fn queue_id(&self) -> u16 {
+        self.inner.queue_id
+    }
+
     /// Receive packets and store it to the given arrayvec.
     #[inline]
     pub fn rx<A: Array<Item = Packet<MPoolPriv>>>(&self, buffer: &mut ArrayVec<A>) {
@@ -648,6 +660,12 @@ impl Drop for TxQInner {
 }
 
 impl TxQ {
+    /// Returns current queue index.
+    #[inline]
+    pub fn queue_id(&self) -> u16 {
+        self.inner.queue_id
+    }
+
     /// Try transmit packets in the given arrayvec buffer.
     /// All packets in the buffer will be sent.
     #[inline]
