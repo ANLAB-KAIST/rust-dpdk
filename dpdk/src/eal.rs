@@ -1,6 +1,6 @@
 //! Wrapper for DPDK's environment abstraction layer (EAL).
+use crate::ffi;
 use arrayvec::*;
-use ffi;
 use log::{debug, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
@@ -1078,7 +1078,7 @@ impl Eal {
     }
 }
 
-pub use super::dpdk_sys::EalStaticFunctions as EalGlobalApi;
+pub use dpdk_sys::EalStaticFunctions as EalGlobalApi;
 
 unsafe impl EalGlobalApi for Eal {}
 
