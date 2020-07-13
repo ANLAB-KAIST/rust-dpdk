@@ -1,5 +1,5 @@
 [package]
-edition = '2018'
+edition = "2018"
 name = "rust-dpdk"
 version = "0.2.20021"
 authors = ["Keunhong Lee <dlrmsghd@gmail.com>", "Jeehoon Kang <jeehoon.kang@kaist.ac.kr>", "ANLAB <support@an.kaist.ac.kr>"]
