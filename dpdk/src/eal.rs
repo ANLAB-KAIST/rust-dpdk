@@ -331,6 +331,10 @@ impl Drop for PortInner {
         // Safety: foreign function.
         let ret = unsafe { dpdk_sys::rte_eth_dev_owner_unset(self.port_id, self.owner_id) };
         assert_eq!(ret, 0);
+        unsafe {
+            dpdk_sys::rte_eth_dev_stop(self.port_id);
+            dpdk_sys::rte_eth_dev_close(self.port_id);
+        }
         // TODO following code causes segmentation fault.  Its DPDK's bug that
         // `rte_eth_dev_owner_delete` does not check whether `rte_eth_devices[port_id].data` is
         // null.  Safety: foreign function.

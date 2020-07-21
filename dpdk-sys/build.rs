@@ -684,7 +684,7 @@ impl State {
             .join("\n");
 
         // List of manually enabled DPDK PMDs
-        let linkable_whitelist: Vec<_> = vec![
+        let mut linkable_whitelist: Vec<_> = vec![
             "rte_pmd_ixgbe_set_all_queues_drop_en", // ixgbe
             "rte_pmd_i40e_ping_vfs",                // i40e
             "e1000_igb_init_log",                   // e1000
@@ -703,7 +703,7 @@ impl State {
         .collect();
 
         // List of non-static PMD-specific functions used to create symbolic dependencies to PMDs.
-        let linkable_extern_def_list: Vec<_> = vec![
+        let mut linkable_extern_def_list: Vec<_> = vec![
             "void e1000_igb_init_log(void)",                           // e1000
             "int ice_release_vsi(struct ice_vsi *vsi)",                // ice
             "void vmxnet3_dev_tx_queue_release(void *txq)",            // vmxnet3
@@ -718,6 +718,17 @@ impl State {
         .iter()
         .map(|name| (*name).to_string())
         .collect();
+
+        // If non-default net drivers are enabled (ex. MLX5), add their PMD to the list.
+        for link in &self.dpdk_links {
+            let libname = link.file_name().unwrap().to_str().unwrap();
+
+            if libname == "librte_pmd_mlx5.a" {
+                linkable_whitelist.push("mlx5_set_cksum_table".to_string());
+                linkable_extern_def_list.push("void mlx5_set_cksum_table(void)".to_string());
+                break;
+            }
+        }
 
         // Currently, we use whitelist instead of extracted function list from DPDK library.  See
         // `linkable_pmd_functions` field of `State` for more information.
@@ -879,6 +890,10 @@ impl State {
                 let link_name = &capture[1];
                 if link_name == "dpdk" {
                     continue;
+                } else if link_name == "rte_pmd_mlx5" {
+                    // MLX5 PMD requires additional liniking of two libraries
+                    println!("cargo:rustc-link-lib=ibverbs");
+                    println!("cargo:rustc-link-lib=mlx5");
                 }
                 println!("cargo:rustc-link-lib=static={}", link_name);
             }
