@@ -560,23 +560,24 @@ impl<MPoolPriv: Zeroable> Packet<MPoolPriv> {
     }
 
     /// Skip first n bytes of this packet.
-    /// Returns true on success.
+    /// Panic: when size is out of bound.
     #[inline]
-    pub fn trim_head(&mut self, size: usize) -> bool {
+    pub fn trim_head(&mut self, size: usize) {
         // Safety: foreign function.
         unsafe {
             let ret = dpdk_sys::rte_pktmbuf_adj(self.ptr.as_ptr(), size as u16);
-            return ret != ptr::null_mut();
+            assert_ne!(ret, ptr::null_mut());
         }
     }
 
     /// Skip last n bytes of this packet.
+    /// Panic: when size is out of bound.
     #[inline]
-    pub fn trim_tail(&mut self, size: usize) -> bool {
+    pub fn trim_tail(&mut self, size: usize) {
         // Safety: foreign function.
         unsafe {
             let ret = dpdk_sys::rte_pktmbuf_trim(self.ptr.as_ptr(), size as u16);
-            return ret == 0;
+            assert_eq!(ret, 0);
         }
     }
 
@@ -591,22 +592,24 @@ impl<MPoolPriv: Zeroable> Packet<MPoolPriv> {
     }
 
     /// Prepend packet's data buffer to left.
+    /// Panic: when size is out of bound.
     #[inline]
-    pub fn prepend(&mut self, size: usize) -> bool {
+    pub fn prepend(&mut self, size: usize) {
         // Safety: foreign function.
         unsafe {
             let ret = dpdk_sys::rte_pktmbuf_prepend(self.ptr.as_ptr(), size as u16);
-            return ret != ptr::null_mut();
+            assert_ne!(ret, ptr::null_mut());
         }
     }
 
     /// Prepend packet's data buffer to right.
+    /// Panic: when size is out of bound.
     #[inline]
-    pub fn append(&mut self, size: usize) -> bool {
+    pub fn append(&mut self, size: usize) {
         // Safety: foreign function.
         unsafe {
             let ret = dpdk_sys::rte_pktmbuf_append(self.ptr.as_ptr(), size as u16);
-            return ret != ptr::null_mut();
+            assert_ne!(ret, ptr::null_mut());
         }
     }
 }
