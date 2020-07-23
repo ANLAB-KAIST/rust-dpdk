@@ -533,6 +533,7 @@ impl<MPoolPriv: Zeroable> Packet<MPoolPriv> {
     }
 
     /// Change the packet length
+    /// TODO: Do we need this? Shall we replace it with prepend/append?
     #[inline]
     pub fn set_len(&mut self, size: usize) {
         // Safety: buffer boundary is guarded by the assert statement.
@@ -559,32 +560,53 @@ impl<MPoolPriv: Zeroable> Packet<MPoolPriv> {
     }
 
     /// Skip first n bytes of this packet.
+    /// Returns true on success.
     #[inline]
-    pub fn trim_head(&mut self, size: usize) {
+    pub fn trim_head(&mut self, size: usize) -> bool {
         // Safety: foreign function.
         unsafe {
             let ret = dpdk_sys::rte_pktmbuf_adj(self.ptr.as_ptr(), size as u16);
-            assert_ne!(ret, ptr::null_mut());
+            return ret != ptr::null_mut();
         }
     }
 
     /// Skip last n bytes of this packet.
     #[inline]
-    pub fn trim_tail(&mut self, size: usize) {
+    pub fn trim_tail(&mut self, size: usize) -> bool {
         // Safety: foreign function.
         unsafe {
             let ret = dpdk_sys::rte_pktmbuf_trim(self.ptr.as_ptr(), size as u16);
-            assert_eq!(ret, 0);
+            return ret == 0;
         }
     }
 
     /// Reset headroom.
     /// Note: tail can be reset by setting `data_len` to its buffer capacity.
     #[inline]
-    pub fn reset_head_trim(&mut self) {
+    pub fn reset_headroom(&mut self) {
         // Safety: foreign function.
         unsafe {
             dpdk_sys::rte_pktmbuf_reset_headroom(self.ptr.as_ptr());
+        }
+    }
+
+    /// Prepend packet's data buffer to left.
+    #[inline]
+    pub fn prepend(&mut self, size: usize) -> bool {
+        // Safety: foreign function.
+        unsafe {
+            let ret = dpdk_sys::rte_pktmbuf_prepend(self.ptr.as_ptr(), size as u16);
+            return ret != ptr::null_mut();
+        }
+    }
+
+    /// Prepend packet's data buffer to right.
+    #[inline]
+    pub fn append(&mut self, size: usize) -> bool {
+        // Safety: foreign function.
+        unsafe {
+            let ret = dpdk_sys::rte_pktmbuf_append(self.ptr.as_ptr(), size as u16);
+            return ret != ptr::null_mut();
         }
     }
 }
