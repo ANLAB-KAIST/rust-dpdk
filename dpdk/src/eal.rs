@@ -503,7 +503,8 @@ impl<MPoolPriv: Zeroable> Packet<MPoolPriv> {
         unsafe { &mut *(dpdk_sys::rte_mbuf_to_priv(self.ptr.as_ptr()) as *mut MPoolPriv) }
     }
 
-    /// Read pkt_len field
+    /// Retrieve read-only slice of packet buffer (regardless of `data_offset`).
+    /// TODO: use `rte_pktmbuf_read` later?
     #[inline]
     pub fn buffer(&self) -> &[u8] {
         unsafe {
@@ -517,7 +518,7 @@ impl<MPoolPriv: Zeroable> Packet<MPoolPriv> {
         }
     }
 
-    /// Get raw buffer regardless of current packet length
+    /// Retrieve writable slice of packet buffer (regardless of `data_offset`).
     #[inline]
     pub fn buffer_mut(&mut self) -> &mut [u8] {
         unsafe {
@@ -532,6 +533,7 @@ impl<MPoolPriv: Zeroable> Packet<MPoolPriv> {
     }
 
     /// Change the packet length
+    /// TODO: Do we need this? Shall we replace it with prepend/append?
     #[inline]
     pub fn set_len(&mut self, size: usize) {
         // Safety: buffer boundary is guarded by the assert statement.
@@ -543,17 +545,72 @@ impl<MPoolPriv: Zeroable> Packet<MPoolPriv> {
         }
     }
 
-    /// Get read-only data bound to current packet length
+    /// Retrieve read-only slice of packet's data buffer.
+    /// TODO: use `rte_pktmbuf_read` instead?
     #[inline]
     pub fn data(&self) -> &[u8] {
         &self.buffer()[0..self.len()]
     }
 
-    /// Get read-only data bound to current packet length
+    /// Retrieve writable slice of packet's data buffer.
     #[inline]
     pub fn data_mut(&mut self) -> &mut [u8] {
         let len = self.len();
         &mut self.buffer_mut()[0..len]
+    }
+
+    /// Skip first n bytes of this packet.
+    /// Panic: when size is out of bound.
+    #[inline]
+    pub fn trim_head(&mut self, size: usize) {
+        // Safety: foreign function.
+        unsafe {
+            let ret = dpdk_sys::rte_pktmbuf_adj(self.ptr.as_ptr(), size as u16);
+            assert_ne!(ret, ptr::null_mut());
+        }
+    }
+
+    /// Skip last n bytes of this packet.
+    /// Panic: when size is out of bound.
+    #[inline]
+    pub fn trim_tail(&mut self, size: usize) {
+        // Safety: foreign function.
+        unsafe {
+            let ret = dpdk_sys::rte_pktmbuf_trim(self.ptr.as_ptr(), size as u16);
+            assert_eq!(ret, 0);
+        }
+    }
+
+    /// Reset headroom.
+    /// Note: tail can be reset by setting `data_len` to its buffer capacity.
+    #[inline]
+    pub fn reset_headroom(&mut self) {
+        // Safety: foreign function.
+        unsafe {
+            dpdk_sys::rte_pktmbuf_reset_headroom(self.ptr.as_ptr());
+        }
+    }
+
+    /// Prepend packet's data buffer to left.
+    /// Panic: when size is out of bound.
+    #[inline]
+    pub fn prepend(&mut self, size: usize) {
+        // Safety: foreign function.
+        unsafe {
+            let ret = dpdk_sys::rte_pktmbuf_prepend(self.ptr.as_ptr(), size as u16);
+            assert_ne!(ret, ptr::null_mut());
+        }
+    }
+
+    /// Prepend packet's data buffer to right.
+    /// Panic: when size is out of bound.
+    #[inline]
+    pub fn append(&mut self, size: usize) {
+        // Safety: foreign function.
+        unsafe {
+            let ret = dpdk_sys::rte_pktmbuf_append(self.ptr.as_ptr(), size as u16);
+            assert_ne!(ret, ptr::null_mut());
+        }
     }
 }
 
