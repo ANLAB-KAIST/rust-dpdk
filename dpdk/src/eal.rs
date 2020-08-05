@@ -1,6 +1,7 @@
 //! Wrapper for DPDK's environment abstraction layer (EAL).
 use crate::ffi;
 use arrayvec::*;
+use crossbeam::thread::{Scope, ScopedJoinHandle};
 use log::{debug, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
@@ -124,6 +125,31 @@ impl LCoreId {
     {
         let lcore_id = self.0;
         thread::spawn(move || {
+            // Safety: foreign function.
+            let ret = unsafe {
+                dpdk_sys::rte_thread_set_affinity(&mut dpdk_sys::rte_lcore_cpuset(lcore_id))
+            };
+            if ret < 0 {
+                warn!("Failed to set affinity on lcore {}", lcore_id);
+            }
+            f()
+        })
+    }
+
+    /// Launch a thread pined to this core.
+    /// TODO: change it to crossbeam's `spawn` signature when we start to use crossbeam.
+    pub fn launch_scoped<'scope, 'env, F, T>(
+        self,
+        s: &'scope Scope<'env>,
+        f: F,
+    ) -> ScopedJoinHandle<'scope, T>
+    where
+        F: FnOnce() -> T,
+        F: Send + 'env,
+        T: Send + 'env,
+    {
+        let lcore_id = self.0;
+        s.spawn(move |_| {
             // Safety: foreign function.
             let ret = unsafe {
                 dpdk_sys::rte_thread_set_affinity(&mut dpdk_sys::rte_lcore_cpuset(lcore_id))
@@ -903,8 +929,7 @@ impl Eal {
         for lcore_id in &lcore_id_list {
             let lcore_id = *lcore_id;
             // Safety: foreign function.
-            let socket_id =
-                unsafe { dpdk_sys::rte_lcore_to_socket_id(lcore_id.try_into().unwrap()) };
+            let socket_id = unsafe { dpdk_sys::rte_lcore_to_socket_id(lcore_id) };
             // Safety: foreign function.
             let cpu_id = unsafe { dpdk_sys::rte_lcore_to_cpu_id(lcore_id.try_into().unwrap()) };
             debug!(
