@@ -22,6 +22,7 @@ log = "0.4"
 simple_logger = "1"
 anyhow = "1.0"
 arrayvec = "0.5"
+crossbeam = "0.7"
 
 [lib]
 name = "dpdk"
