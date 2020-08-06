@@ -4,7 +4,7 @@ extern crate dpdk;
 extern crate log;
 extern crate simple_logger;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use arrayvec::*;
 use dpdk::eal::*;
 use log::{debug, info};
@@ -125,27 +125,30 @@ fn main() -> Result<()> {
         None,
     );
 
-    let threads = eal
-        .setup(Affinity::Full, Affinity::Full)?
-        .into_iter()
-        .map(|(lcore, rxs, txs)| {
-            let local_eal = eal.clone();
-            let local_mpool = default_mpool.clone();
-            lcore.launch(move || {
-                match lcore.into() {
-                    // Core 0 action: TX packets to txq[0]
-                    0 => {
-                        sender(local_eal.clone(), local_mpool, txs[0].clone());
-                        receiver(local_eal, rxs[1].clone());
-                        true
+    crossbeam::thread::scope(|s| {
+        let threads = eal
+            .setup(Affinity::Full, Affinity::Full)?
+            .into_iter()
+            .map(|(lcore, rxs, txs)| {
+                let local_eal = eal.clone();
+                let local_mpool = default_mpool.clone();
+                lcore.launch(s, move || {
+                    match lcore.into() {
+                        // Core 0 action: TX packets to txq[0]
+                        0 => {
+                            sender(local_eal.clone(), local_mpool, txs[0].clone());
+                            receiver(local_eal, rxs[1].clone());
+                            true
+                        }
+                        // Otherwise, do nothing
+                        _ => true,
                     }
-                    // Otherwise, do nothing
-                    _ => true,
-                }
+                })
             })
-        })
-        .collect::<Vec<_>>();
-    let ret = threads.into_iter().map(|x| x.join().unwrap()).all(|x| x);
-    assert_eq!(ret, true);
-    Ok(())
+            .collect::<Vec<_>>();
+        let ret = threads.into_iter().map(|x| x.join().unwrap()).all(|x| x);
+        assert_eq!(ret, true);
+        Ok(())
+    })
+    .map_err(|err| anyhow!("{:?}", err))?
 }

@@ -12,7 +12,6 @@ use std::mem::{size_of, MaybeUninit};
 use std::ptr::{self, NonNull};
 use std::slice;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use thiserror::Error;
 
 const MAGIC: &str = "be0dd4ab";
@@ -115,38 +114,12 @@ impl LCoreId {
         Self(id)
     }
 
-    /// Launch a thread pined to this core.
-    /// TODO: change it to crossbeam's `spawn` signature when we start to use crossbeam.
-    pub fn launch<F, T>(self, f: F) -> thread::JoinHandle<T>
+    /// Launch a thread pined to this core (scoped).
+    pub fn launch<'s, 'e, F, T>(self, s: &'s Scope<'e>, f: F) -> ScopedJoinHandle<'s, T>
     where
         F: FnOnce() -> T,
-        F: Send + 'static,
-        T: Send + 'static,
-    {
-        let lcore_id = self.0;
-        thread::spawn(move || {
-            // Safety: foreign function.
-            let ret = unsafe {
-                dpdk_sys::rte_thread_set_affinity(&mut dpdk_sys::rte_lcore_cpuset(lcore_id))
-            };
-            if ret < 0 {
-                warn!("Failed to set affinity on lcore {}", lcore_id);
-            }
-            f()
-        })
-    }
-
-    /// Launch a thread pined to this core.
-    /// TODO: change it to crossbeam's `spawn` signature when we start to use crossbeam.
-    pub fn launch_scoped<'scope, 'env, F, T>(
-        self,
-        s: &'scope Scope<'env>,
-        f: F,
-    ) -> ScopedJoinHandle<'scope, T>
-    where
-        F: FnOnce() -> T,
-        F: Send + 'env,
-        T: Send + 'env,
+        F: Send + 'e,
+        T: Send + 'e,
     {
         let lcore_id = self.0;
         s.spawn(move |_| {
