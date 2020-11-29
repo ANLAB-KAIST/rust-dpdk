@@ -18,7 +18,7 @@ const MAGIC: &str = "be0dd4ab";
 
 pub const DEFAULT_TX_DESC: u16 = 128;
 pub const DEFAULT_RX_DESC: u16 = 128;
-pub const DEFAULT_RX_POOL_SIZE: usize = 1024;
+pub const DEFAULT_RX_POOL_SIZE: usize = 1023;
 pub const DEFAULT_RX_PER_CORE_CACHE: usize = 0;
 pub const DEFAULT_PACKET_DATA_LENGTH: usize = 2048;
 pub const DEFAULT_PROMISC: bool = true;
