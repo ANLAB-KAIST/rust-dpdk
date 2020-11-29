@@ -75,8 +75,8 @@ rust-dpdk-sys = { git = "https://github.com/ANLAB-KAIST/rust-dpdk.git" }
 
 ## Issues
 
-List of failed bindgen builds (last update: 2020-03-18)
+List of failed bindgen builds (last update: 2020-11-30)
 
 * v0.48
 * v0.51
-* v0.53 (clang-sys mismatch)
+* v0.53 - v0.56
