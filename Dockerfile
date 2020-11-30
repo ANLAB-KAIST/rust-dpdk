@@ -1,14 +1,13 @@
 FROM debian:latest
 
 ENV RTE_SDK=/usr/local/share/dpdk
-ENV RTE_TARGET=x86_64-native-linux-clang
 
-RUN echo "APT last updated: 2020/03/27"
+RUN echo "APT last updated: 2020/11/30"
 
 RUN apt-get update -y && apt-get dist-upgrade -y && apt-get autoremove -y && apt-get autoclean -y
 RUN apt-get install -y linux-headers-amd64
 #RUN apt-get install -y linux-headers-$(uname -r)-all
-RUN apt-get install -y build-essential libnuma-dev git 
+RUN apt-get install -y build-essential libnuma-dev git meson
 RUN apt-get install -y curl
 RUN apt-get install -y libclang-dev clang llvm-dev
 
@@ -22,18 +21,14 @@ RUN chmod -R a+w ${RUSTUP_HOME} ${CARGO_HOME}
 # Recover env and verify
 RUN rustup --version
 
-RUN git clone -b v20.02 "https://github.com/DPDK/dpdk.git" /dpdk
+RUN git clone -b v20.11 "http://dpdk.org/git/dpdk" /dpdk
 
 WORKDIR /dpdk
 
-RUN echo "CONFIG_RTE_EAL_IGB_UIO=n" >> config/common_linux
-RUN echo "CONFIG_RTE_KNI_KMOD=n" >> config/common_linux
-
-RUN echo "${RTE_TARGET}" > RTE_TARGET_EXPECTED
-RUN make config T="${RTE_TARGET}" | sed -r 's/(.*)\s(\w+)/\2/g' > RTE_TARGET
-RUN diff -w -q RTE_TARGET RTE_TARGET_EXPECTED
-RUN EXTRA_CFLAGS=" -fPIC " make -j$(nproc)
-RUN EXTRA_CFLAGS=" -fPIC " make -j$(nproc) install
+RUN meson build
+RUN ninja -C build
+RUN ninja -C build install
+RUN ldconfig
 
 WORKDIR /
 RUN rm -rf /dpdk

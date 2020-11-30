@@ -21,28 +21,6 @@ use std::process::Command;
 /// To avoid collision, we add a magic prefix for each.
 static PREFIX: &str = "prefix_8a9f682d_";
 
-/// Some DPDK headers are not intended to be directly included.
-///
-/// Heuristically check whether a header allows it to be directly included.
-fn check_direct_include(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    let file = File::open(path).unwrap();
-    let reader = BufReader::new(&file);
-    for (_, line) in reader.lines().enumerate() {
-        let line_str = line.ok().unwrap().trim().to_lowercase();
-        if line_str.starts_with("#error")
-            && line_str.find("do not").is_some()
-            && line_str.find("include").is_some()
-            && line_str.find("directly").is_some()
-        {
-            return false;
-        }
-    }
-    true
-}
-
 /// Convert `/**` comments into `///` comments
 fn strip_comments(comment: String) -> String {
     comment
@@ -190,65 +168,24 @@ impl State {
 
     /// Find DPDK install path.
     ///
-    /// 1. If `RTE_SDK` is set, find its installed directory.
-    /// 2. If `RTE_TARGET` is set, DPDK is at `RTE_SDK/RTE_TARGET`.
-    /// 3. If not set, default `RTE_TARGET` is `build`.
-    /// 4. If DPDK is installed at `/usr/local/include/dpdk`, use it.
-    /// 5. If none is found, download from `https://github.com/DPDK/dpdk.git`.
+    /// After 20.11 update, build system is integrated into meson.
+    /// Thus, it is difficult to obtain build path manually.
+    /// Currently, one must install DPDK to one's system.
+    /// This function validates whether DPDK is installed.
     fn find_dpdk(&mut self) {
-        if let Ok(path_string) = env::var("RTE_SDK") {
-            let mut dpdk_path = PathBuf::from(path_string);
-            if let Ok(target_string) = env::var("RTE_TARGET") {
-                dpdk_path = dpdk_path.join(target_string);
-            } else {
-                dpdk_path = dpdk_path.join("build");
-            }
-            self.include_path = Some(dpdk_path.join("include"));
-            self.library_path = Some(dpdk_path.join("lib"));
-        } else if Path::new("/usr/local/include/dpdk/rte_config.h").exists() {
-            self.include_path = Some(PathBuf::from("/usr/local/include/dpdk"));
-            self.library_path = Some(PathBuf::from("/usr/local/lib"));
+        // To find correct lib path of this platform.
+        let output = Command::new("cc")
+            .args(&["-dumpmachine"])
+            .output()
+            .expect("failed obtain current machine");
+        let machine_string = String::from(String::from_utf8(output.stdout).unwrap().trim());
+        let config_header = PathBuf::from("/usr/local/include/rte_config.h");
+        if config_header.exists() {
+            self.include_path = Some(PathBuf::from("/usr/local/include"));
+            self.library_path = Some(PathBuf::from(format!("/usr/local/lib/{}", machine_string)));
         } else {
-            // Automatic download
-            let dir_path = Path::new(&self.out_path).join("3rdparty");
-            if !dir_path.exists() {
-                create_dir(&dir_path).ok();
-            }
-            assert!(dir_path.exists());
-            let git_path = dir_path.join("dpdk");
-            if !git_path.exists() {
-                Command::new("git")
-                    .args(&[
-                        "clone",
-                        "-b",
-                        "v20.02",
-                        "https://github.com/DPDK/dpdk.git",
-                        git_path.to_str().unwrap(),
-                    ])
-                    .output()
-                    .expect("failed to run git command");
-            }
-            Command::new("make")
-                .args(&["-C", git_path.to_str().unwrap(), "defconfig"])
-                .output()
-                .expect("failed to run make command");
-            Command::new("make")
-                .env("EXTRA_CFLAGS", " -fPIC ")
-                .args(&[
-                    "-C",
-                    git_path.to_str().unwrap(),
-                    &format!("-j{}", num_cpus::get()),
-                ])
-                .output()
-                .expect("failed to run make command");
-
-            self.include_path = Some(git_path.join("build").join("include"));
-            self.library_path = Some(git_path.join("build").join("lib"));
+            panic!("DPDK is not installed on your system! (Cannot find /usr/local/include/dpdk/rte_config.h)")
         }
-        assert!(self.include_path.as_ref().unwrap().exists());
-        assert!(self.library_path.as_ref().unwrap().exists());
-        let config_header = self.include_path.as_ref().unwrap().join("rte_config.h");
-        assert!(config_header.exists());
         println!(
             "cargo:rerun-if-changed={}",
             self.include_path.as_ref().unwrap().to_str().unwrap()
@@ -325,7 +262,8 @@ impl State {
     fn make_all_in_one_header(&mut self) {
         let include_dir = self.include_path.as_ref().unwrap();
         let dpdk_config = self.dpdk_config.as_ref().unwrap();
-        let blacklist = vec!["rte_function_versioning"];
+        // dlb drivers have duplicated enum definitions.
+        let blacklist = vec!["rte_pmd_dlb", "rte_pmd_dlb2"];
         let mut headers = vec![];
         for entry in include_dir.read_dir().expect("read_dir failed") {
             if let Ok(entry) = entry {
@@ -349,9 +287,6 @@ impl State {
                 if path == *dpdk_config {
                     continue;
                 }
-                if !check_direct_include(&path) {
-                    continue;
-                }
                 headers.push(path);
             } else {
                 continue;
@@ -362,6 +297,7 @@ impl State {
         assert!(!headers.is_empty());
 
         // Heuristically remove platform-specific headers
+        let platform_set = vec!["x86", "x86_64", "x64", "arm", "arm32", "arm64", "amd64"];
         let mut name_set = vec![];
         for file in &headers {
             let file_name = String::from(file.file_stem().unwrap().to_str().unwrap());
@@ -372,6 +308,11 @@ impl State {
             let file_name = file.file_stem().unwrap().to_str().unwrap();
             for prev_name in &name_set {
                 if file_name.starts_with(&format!("{}_", prev_name)) {
+                    continue 'outer;
+                }
+            }
+            for platform in &platform_set {
+                if file_name.ends_with(&format!("_{}", platform)) {
                     continue 'outer;
                 }
             }

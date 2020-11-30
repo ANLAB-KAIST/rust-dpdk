@@ -3,7 +3,7 @@
 [![Build Status](https://jenkins.kaist.ac.kr/buildStatus/icon?job=ANLAB-KAIST%2Frust-dpdk%2Fmaster)](https://jenkins.kaist.ac.kr/job/ANLAB-KAIST/job/rust-dpdk/job/master/)
 
 Tested with <https://github.com/rust-lang/rust-bindgen> v0.47.
-Tested with <https://github.com/DPDK/dpdk.git> v20.02.
+Tested with <https://github.com/DPDK/dpdk.git> v20.11.
 
 ## Goals
 
@@ -31,32 +31,20 @@ Here, we include basic instructions to build DPDK and use this library.
 
 Commonly, following packages are required to build DPDK.
 ```{.sh}
-apt-get install -y curl git build-essential libnuma-dev # To download and build DPDK
+apt-get install -y curl git build-essential libnuma-dev meson # To download and build DPDK
 apt-get install -y linux-headers-amd64 # To build kernel drivers
 apt-get install -y libclang-dev clang llvm-dev # To analyze DPDK headers and create bindings
 ```
 
-We recognized existing DPDK installation from `RTE_SDK` and `RTE_TARGET` environment variables.
-If none of them is set, it will download and build DPDK in its temp directory.
-
-If you want to install your own DPDK, download source code from DPDK official website.
+DPDK can be installed by following commands:
 ```{.sh}
-wget http://fast.dpdk.org/rel/dpdk-20.02.tar.xz
-tar xf dpdk-20.02.tar.xz
-mv dpdk-20.02 dpdk
-cd dpdk
-export RTE_SDK=`pwd`
+meson build
+ninja -C build
+ninja -C build install # sudo required
 ```
+Since v20.11, kernel drivers are moved to https://git.dpdk.org/dpdk-kmods/.
+If your NIC requires kernel drivers, they are found at the above link.
 
-If you prepare your own DPDK build, DPDK must be built with `-fPIC` flag.
-```{.sh}
-# in DPDK directory
-EXTRA_CFLAGS=" -fPIC " make config T=x86_64-native-linux-clang
-EXTRA_CFLAGS=" -fPIC " make -j install
-
-# T=x86_64-native-linux-clang becomes RTE_TARGET
-export RTE_TARGET="x86_64-native-linux-clang"
-```
 
 Now add `rust-dpdk` to your project's `Cargo.toml` and use it!
 ```{.toml}
@@ -75,8 +63,8 @@ rust-dpdk-sys = { git = "https://github.com/ANLAB-KAIST/rust-dpdk.git" }
 
 ## Issues
 
-List of failed bindgen builds (last update: 2020-03-18)
+List of failed bindgen builds (last update: 2020-11-30)
 
 * v0.48
 * v0.51
-* v0.53 (clang-sys mismatch)
+* v0.53 - v0.56
