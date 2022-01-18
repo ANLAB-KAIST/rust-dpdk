@@ -14,7 +14,7 @@ use std::env;
 ///
 /// Note: we need to use `is_xx_set` because we cannot safely use `Option<T>` with `zeroed()`.
 #[derive(Debug, Clone, Copy)]
-struct TestPriv {
+pub struct TestPriv {
     is_from_set: bool,
     from_port: u16,
     from_queue: u16,
