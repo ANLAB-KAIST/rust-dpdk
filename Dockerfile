@@ -1,4 +1,4 @@
-FROM debian:latest
+FROM debian:buster
 
 ENV RTE_SDK=/usr/local/share/dpdk
 

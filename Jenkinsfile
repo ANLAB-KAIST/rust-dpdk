@@ -1,9 +1,12 @@
 pipeline {
     agent { dockerfile true }
+    environment {
+        CARGO = "cargo --locked"
+    }
     stages {
         stage ("Version") {
             steps {
-                sh "cargo --version"
+                sh "$CARGO --version"
                 sh "rustc --version"
                 sh "rustup component add rustfmt"
                 sh "rustup component add clippy"
@@ -11,24 +14,24 @@ pipeline {
         }
         stage ("Check") {
             steps {
-                sh 'cargo check'
-                sh 'cargo fmt --all -- --check'
-                sh 'cargo clippy -- -D warnings'
+                sh "$CARGO check"
+                sh "$CARGO fmt --all -- --check"
+                sh "$CARGO clippy -- -D warnings"
             }
         }
         stage ("Build") {
             steps {
-                sh "cargo build"
+                sh "$CARGO build"
             }
         }
         stage ("Test (common)") {
             steps {
-                sh "cargo test --lib"
+                sh "$CARGO test --lib"
             }
         }
         stage ("Test (dpdk-sys)") {
             steps {
-                sh "cargo run -p rust-dpdk-sys -- --no-pci --no-huge"
+                sh "$CARGO run -p rust-dpdk-sys -- --no-pci --no-huge"
             }
         }
     }

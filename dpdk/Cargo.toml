@@ -19,7 +19,7 @@ rust-dpdk-sys = { path = "../dpdk-sys" }
 thiserror = "1"
 etrace = "1"
 log = "0.4"
-simple_logger = "1"
+simple_logger = "= 1.11"
 anyhow = "1.0"
 arrayvec = "0.5"
 crossbeam = "0.7"
