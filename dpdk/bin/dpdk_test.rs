@@ -1,3 +1,6 @@
+#![allow(clippy::bool_assert_comparison)]
+#![allow(warnings)] // XXX: This package is under construction
+
 extern crate anyhow;
 extern crate arrayvec;
 extern crate dpdk;
@@ -14,7 +17,7 @@ use std::env;
 ///
 /// Note: we need to use `is_xx_set` because we cannot safely use `Option<T>` with `zeroed()`.
 #[derive(Debug, Clone, Copy)]
-struct TestPriv {
+pub struct TestPriv {
     is_from_set: bool,
     from_port: u16,
     from_queue: u16,
@@ -126,26 +129,25 @@ fn main() -> Result<()> {
     );
 
     crossbeam::thread::scope(|s| {
-        let threads = eal
-            .setup(Affinity::Full, Affinity::Full)?
-            .into_iter()
-            .map(|(lcore, rxs, txs)| {
-                let local_eal = eal.clone();
-                let local_mpool = default_mpool.clone();
-                lcore.launch(s, move || {
-                    match lcore.into() {
-                        // Core 0 action: TX packets to txq[0]
-                        0 => {
-                            sender(local_eal.clone(), local_mpool, txs[0].clone());
-                            receiver(local_eal, rxs[1].clone());
-                            true
+        let threads =
+            eal.setup(Affinity::Full, Affinity::Full)?
+                .into_iter()
+                .map(|(lcore, rxs, txs)| {
+                    let local_eal = eal.clone();
+                    let local_mpool = default_mpool.clone();
+                    lcore.launch(s, move || {
+                        match lcore.into() {
+                            // Core 0 action: TX packets to txq[0]
+                            0 => {
+                                sender(local_eal.clone(), local_mpool, txs[0].clone());
+                                receiver(local_eal, rxs[1].clone());
+                                true
+                            }
+                            // Otherwise, do nothing
+                            _ => true,
                         }
-                        // Otherwise, do nothing
-                        _ => true,
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
+                    })
+                });
         let ret = threads.into_iter().map(|x| x.join().unwrap()).all(|x| x);
         assert_eq!(ret, true);
         Ok(())

@@ -136,10 +136,7 @@ impl State {
             .filter(|diagnostic| clang::diagnostic::Severity::Fatal == diagnostic.get_severity())
             .count();
         if fatal_diagnostics > 0 {
-            panic!(format!(
-                "Encountering {} fatal parse error(s)",
-                fatal_diagnostics
-            ));
+            panic!("Encountering {} fatal parse error(s)", fatal_diagnostics);
         }
         trans_unit
     }
@@ -199,14 +196,13 @@ impl State {
             .join("gen")
             .read_dir()
             .expect("read_dir failed")
+            .flatten()
         {
-            if let Ok(entry) = entry {
-                let path = entry.path();
+            let path = entry.path();
 
-                if let Some(ext) = path.extension() {
-                    if ext == "template" {
-                        println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
-                    }
+            if let Some(ext) = path.extension() {
+                if ext == "template" {
+                    println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
                 }
             }
         }
@@ -324,7 +320,7 @@ impl State {
             let left_count = left_str.split('_').count();
             let right_count = right_str.split('_').count();
             match left_count.cmp(&right_count) {
-                Ordering::Equal => left_str.cmp(&right_str),
+                Ordering::Equal => left_str.cmp(right_str),
                 Ordering::Less => Ordering::Less,
                 Ordering::Greater => Ordering::Greater,
             }

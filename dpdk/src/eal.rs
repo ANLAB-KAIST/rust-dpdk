@@ -101,10 +101,10 @@ pub struct Port {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LCoreId(u32);
 
-impl Into<u32> for LCoreId {
+impl From<LCoreId> for u32 {
     #[inline]
-    fn into(self) -> u32 {
-        self.0
+    fn from(from: LCoreId) -> Self {
+        from.0
     }
 }
 
@@ -138,10 +138,10 @@ impl LCoreId {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SocketId(u32);
 
-impl Into<u32> for SocketId {
+impl From<SocketId> for u32 {
     #[inline]
-    fn into(self) -> u32 {
-        self.0
+    fn from(from: SocketId) -> Self {
+        from.0
     }
 }
 
@@ -349,6 +349,8 @@ impl Drop for PortInner {
 ///
 /// DPDK provides customizable per-packet metadata. However, it is initialized via
 /// `memset(.., 0, ..)`, and its destructor is not called.
+///
+/// # Safety
 /// A structure must be safe from `MaybeUninit::zeroed().assume_init()`
 /// and it must not implement `Drop` trait.
 pub unsafe trait Zeroable: Sized {
