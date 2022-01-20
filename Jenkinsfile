@@ -1,7 +1,7 @@
 pipeline {
     agent { dockerfile true }
     environment {
-        CARGO = "cargo --frozen"
+        CARGO = "cargo --locked"
     }
     stages {
         stage ("Version") {
