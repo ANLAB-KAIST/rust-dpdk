@@ -1,11 +1,13 @@
 
 %static_use_defs%
 
+#[allow(warnings, clippy::all)]
 extern "C" {
 %explicit_use_defs%
 }
 
 /// Return persist links
+#[allow(warnings, clippy::all)]
 pub fn load_drivers() {
     // # Safety
     // Following function calls return function pointers.
@@ -19,6 +21,7 @@ pub fn load_drivers() {
 /// 
 /// # Safety
 /// This implementation must be used after `rte_eal_init` and never used after `rte_eal_cleanup`.
+#[allow(warnings, clippy::all)]
 pub unsafe trait EalStaticFunctions {
 %static_eal_functions%
 }
