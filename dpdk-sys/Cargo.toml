@@ -21,7 +21,7 @@ regex = "1"
 clang = { version = "1", features = ["runtime", "clang_3_6"] }
 cc = "1"
 etrace = "1"
-itertools = "0.9"
+itertools = "0.10"
 
 [features]
 default = []
