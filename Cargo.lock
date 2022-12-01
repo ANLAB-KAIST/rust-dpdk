@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "rust-dpdk-sys"
-version = "0.1.20021"
+version = "0.1.22110"
 dependencies = [
  "bindgen",
  "cc",

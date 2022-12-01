@@ -1,13 +1,13 @@
-FROM debian:buster
+FROM debian:latest
 
 ENV RTE_SDK=/usr/local/share/dpdk
 
-RUN echo "APT last updated: 2020/11/30"
+RUN echo "APT last updated: 2022/11/30"
 
 RUN apt-get update -y && apt-get dist-upgrade -y && apt-get autoremove -y && apt-get autoclean -y
 RUN apt-get install -y linux-headers-amd64
 #RUN apt-get install -y linux-headers-$(uname -r)-all
-RUN apt-get install -y build-essential libnuma-dev git meson
+RUN apt-get install -y build-essential libnuma-dev git meson python3-pyelftools
 RUN apt-get install -y curl
 RUN apt-get install -y libclang-dev clang llvm-dev
 
@@ -21,7 +21,7 @@ RUN chmod -R a+w ${RUSTUP_HOME} ${CARGO_HOME}
 # Recover env and verify
 RUN rustup --version
 
-RUN git clone -b v20.11 "http://dpdk.org/git/dpdk" /dpdk
+RUN git clone -b v22.11 "http://dpdk.org/git/dpdk" /dpdk
 
 WORKDIR /dpdk
 
