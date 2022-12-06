@@ -2,6 +2,7 @@ pipeline {
     agent { dockerfile true }
     environment {
         CARGO = "cargo --locked"
+        RTE_SDK = "/usr/local/share/dpdk"
     }
     stages {
         stage ("Version") {
