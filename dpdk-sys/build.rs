@@ -293,7 +293,9 @@ impl State {
         assert!(!headers.is_empty());
 
         // Heuristically remove platform-specific headers
-        let platform_set = vec!["x86", "x86_64", "x64", "arm", "arm32", "arm64", "amd64", "generic"];
+        let platform_set = vec![
+            "x86", "x86_64", "x64", "arm", "arm32", "arm64", "amd64", "generic",
+        ];
         // Remove blacklist headers
         let blacklist_prefix = vec!["rte_acc_"];
         let mut name_set = vec![];
@@ -735,7 +737,6 @@ impl State {
             .clang_arg("-march=native")
             .clang_arg("-Wno-everything")
             .rustfmt_bindings(true)
-            
             .opaque_type("vmbus_bufring")
             .opaque_type("rte_avp_desc")
             .opaque_type("rte_.*_hdr")
