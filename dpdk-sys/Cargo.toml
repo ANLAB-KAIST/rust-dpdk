@@ -1,7 +1,7 @@
 [package]
 edition = "2018"
 name = "rust-dpdk-sys"
-version = "0.1.22110"
+version = "0.1.20111"
 authors = ["Keunhong Lee <dlrmsghd@gmail.com>", "Jeehoon Kang <jeehoon.kang@kaist.ac.kr>", "ANLAB <support@an.kaist.ac.kr>"]
 
 homepage = "https://github.com/ANLAB-KAIST/rust-dpdk"
