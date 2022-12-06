@@ -27,7 +27,7 @@ fn strip_comments(comment: String) -> String {
         .split('\n')
         .map(|line| {
             line.trim_matches(|c| c == ' ' || c == '/' || c == '*')
-                .replace("\t", "    ")
+                .replace('\t', "    ")
         })
         .map(|line| format!("/// {}", line))
         .join("\n")
@@ -152,7 +152,7 @@ impl State {
     /// Check compiler and retrieve link path for C standard libs.
     fn check_compiler(&mut self) {
         let output = Command::new("bash")
-            .args(&[
+            .args([
                 "-c",
                 "clang -march=native -Wp,-v -x c - -fsyntax-only < /dev/null 2>&1 | sed -e '/^#include <...>/,/^End of search/{ //!b };d'",
             ])
@@ -172,7 +172,7 @@ impl State {
     fn find_dpdk(&mut self) {
         // To find correct lib path of this platform.
         let output = Command::new("cc")
-            .args(&["-dumpmachine"])
+            .args(["-dumpmachine"])
             .output()
             .expect("failed obtain current machine");
         let machine_string = String::from(String::from_utf8(output.stdout).unwrap().trim());
@@ -439,7 +439,7 @@ impl State {
             // "rte_string_fns.h",
             // "rte_tailq.h",
             // "rte_test.h",
-            "rte_thread.h",
+            // "rte_thread.h",
             "rte_time.h",
             "rte_uuid.h",
             "rte_version.h",
@@ -564,7 +564,7 @@ impl State {
                     format_arg(elem_type, name)
                 }
                 _ => {
-                    return format!("{} {}", type_.get_display_name(), name);
+                    format!("{} {}", type_.get_display_name(), name)
                 }
             }
         }
@@ -795,7 +795,7 @@ impl State {
             &self
                 .eal_function_use_defs
                 .iter()
-                .map(|item| item.replace("\n", "\n\t"))
+                .map(|item| item.replace('\n', "\n\t"))
                 .join("\n"),
         );
 
