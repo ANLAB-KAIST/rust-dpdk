@@ -51,20 +51,3 @@ Now add `rust-dpdk` to your project's `Cargo.toml` and use it!
 [dependencies]
 rust-dpdk = { git = "https://github.com/ANLAB-KAIST/rust-dpdk.git" }
 ```
-
-## Maintenance
-
-1. Update Rust stable
-1. Try new DPDK release with current bindgen
-1. Check whether `clang` and `bindgen` repository share `clang-sys` versions
-1. Try update bindgen (Do not sole update `clang` or `bindgen`)
-1. Test build
-1. Test run (refer to Dockerfile and Jenkinsfile)
-
-## Issues
-
-List of failed bindgen builds (last update: 2020-11-30)
-
-* v0.48
-* v0.51
-* v0.53 - v0.56
