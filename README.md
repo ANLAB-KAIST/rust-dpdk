@@ -1,6 +1,6 @@
 # rust-dpdk
 
-[![Build Status](https://an.kaist.ac.kr/jenkins/buildStatus/icon?job=ANLAB-KAIST%2Frust-dpdk%2Fmain)](https://an.kaist.ac.kr/jenkins/job/ANLAB-KAIST/job/rust-dpdk/job/main/)
+[![Build Status](https://jenkins.redwit.io/buildStatus/icon?job=rust-dpdk%2Fmain)](https://jenkins.redwit.io/job/rust-dpdk/job/main/)
 
 Tested with <https://github.com/rust-lang/rust-bindgen> v0.47.
 Tested with <https://github.com/DPDK/dpdk.git> v20.11.

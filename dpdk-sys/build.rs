@@ -27,7 +27,7 @@ fn strip_comments(comment: String) -> String {
         .split('\n')
         .map(|line| {
             line.trim_matches(|c| c == ' ' || c == '/' || c == '*')
-                .replace("\t", "    ")
+                .replace('\t', "    ")
         })
         .map(|line| format!("/// {}", line))
         .join("\n")
@@ -152,7 +152,7 @@ impl State {
     /// Check compiler and retrieve link path for C standard libs.
     fn check_compiler(&mut self) {
         let output = Command::new("bash")
-            .args(&[
+            .args([
                 "-c",
                 "clang -march=native -Wp,-v -x c - -fsyntax-only < /dev/null 2>&1 | sed -e '/^#include <...>/,/^End of search/{ //!b };d'",
             ])
@@ -172,7 +172,7 @@ impl State {
     fn find_dpdk(&mut self) {
         // To find correct lib path of this platform.
         let output = Command::new("cc")
-            .args(&["-dumpmachine"])
+            .args(["-dumpmachine"])
             .output()
             .expect("failed obtain current machine");
         let machine_string = String::from(String::from_utf8(output.stdout).unwrap().trim());
@@ -259,7 +259,7 @@ impl State {
         let include_dir = self.include_path.as_ref().unwrap();
         let dpdk_config = self.dpdk_config.as_ref().unwrap();
         // dlb drivers have duplicated enum definitions.
-        let blacklist = vec!["rte_pmd_dlb", "rte_pmd_dlb2"];
+        let blacklist = vec!["rte_pmd_dlb", "rte_pmd_dlb2", "rte_baseband_acc"];
         let mut headers = vec![];
         for entry in include_dir.read_dir().expect("read_dir failed") {
             if let Ok(entry) = entry {
@@ -293,7 +293,11 @@ impl State {
         assert!(!headers.is_empty());
 
         // Heuristically remove platform-specific headers
-        let platform_set = vec!["x86", "x86_64", "x64", "arm", "arm32", "arm64", "amd64"];
+        let platform_set = vec![
+            "x86", "x86_64", "x64", "arm", "arm32", "arm64", "amd64", "generic",
+        ];
+        // Remove blacklist headers
+        let blacklist_prefix = vec!["rte_acc_"];
         let mut name_set = vec![];
         for file in &headers {
             let file_name = String::from(file.file_stem().unwrap().to_str().unwrap());
@@ -309,6 +313,11 @@ impl State {
             }
             for platform in &platform_set {
                 if file_name.ends_with(&format!("_{}", platform)) {
+                    continue 'outer;
+                }
+            }
+            for black in &blacklist_prefix {
+                if file_name.starts_with(black) {
                     continue 'outer;
                 }
             }
@@ -430,6 +439,7 @@ impl State {
             // "rte_string_fns.h",
             // "rte_tailq.h",
             // "rte_test.h",
+            // "rte_thread.h",
             "rte_time.h",
             "rte_uuid.h",
             "rte_version.h",
@@ -554,7 +564,7 @@ impl State {
                     format_arg(elem_type, name)
                 }
                 _ => {
-                    return format!("{} {}", type_.get_display_name(), name);
+                    format!("{} {}", type_.get_display_name(), name)
                 }
             }
         }
@@ -727,12 +737,10 @@ impl State {
             .clang_arg("-march=native")
             .clang_arg("-Wno-everything")
             .rustfmt_bindings(true)
-            .opaque_type("max_align_t")
-            .opaque_type("rte_event.*")
-            .opaque_type("rte_avp.*")
-            .opaque_type("vmbus.*")
-            .blocklist_type("rte_arp_hdr")
-            .blocklist_type("rte_arp_ipv4")
+            .opaque_type("vmbus_bufring")
+            .opaque_type("rte_avp_desc")
+            .opaque_type("rte_.*_hdr")
+            .opaque_type("rte_arp_ipv4")
             .generate()
             .unwrap()
             .write_to_file(target_path)
@@ -787,7 +795,7 @@ impl State {
             &self
                 .eal_function_use_defs
                 .iter()
-                .map(|item| item.replace("\n", "\n\t"))
+                .map(|item| item.replace('\n', "\n\t"))
                 .join("\n"),
         );
 
