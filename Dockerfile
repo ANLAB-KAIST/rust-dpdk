@@ -21,7 +21,7 @@ RUN chmod -R a+w ${RUSTUP_HOME} ${CARGO_HOME}
 # Recover env and verify
 RUN rustup --version
 
-RUN git clone -b v22.11 "http://dpdk.org/git/dpdk" /dpdk
+RUN git clone -b v20.11 "http://dpdk.org/git/dpdk" /dpdk
 
 WORKDIR /dpdk
 
