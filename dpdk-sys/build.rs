@@ -65,6 +65,9 @@ struct State {
     /// Use definitions for automatically found EAL APIs.
     eal_function_use_defs: Vec<String>,
 
+    /// Use definitions for automatically found EAL APIs (Global).
+    global_eal_function_use_defs: Vec<String>,
+
     /// Names of `static inline` functions found in DPDK headers.
     static_functions: Vec<String>,
 
@@ -94,6 +97,7 @@ impl State {
             dpdk_links: Default::default(),
             dpdk_config: Default::default(),
             eal_function_use_defs: Default::default(),
+            global_eal_function_use_defs: Default::default(),
             static_functions: Default::default(),
             linkable_pmd_functions: Default::default(),
         }
@@ -449,6 +453,7 @@ impl State {
         // Set of function definition strings (Rust), coupled with function names.
         // This will prevent duplicated function definitions.
         let mut use_def_map = HashMap::new();
+        let mut global_use_def_map = HashMap::new();
 
         for header_name in &headers_whitelist {
             let header_path = self.include_path.as_ref().unwrap().join(header_name);
@@ -529,9 +534,20 @@ impl State {
                 }
                 */
                 use_def_map.insert(name.clone(), format!("\n{comment}\n#[inline(always)]\nfn {func_name} ( &self, {rust_args} ){ret} {{\n\tunsafe {{ crate::{name}({c_arg}) }}\n}}", comment=comment, func_name=name.trim_start_matches("rte_"), name=name, rust_args=rust_arg_names.join(", "), ret=ret, c_arg=arg_names.join(", ")));
+                /*
+                Following code generates trait function definitions like this:
+
+                /// Comment from C
+                #[inline(always)]
+                fn function_name ( arg: u8 ) -> u8 {
+                    unsafe { crate::rte_function_name(arg) }
+                }
+                */
+                global_use_def_map.insert(name.clone(), format!("\n{comment}\n#[inline(always)]\nfn {func_name} ( {rust_args} ){ret} {{\n\tunsafe {{ crate::{name}({c_arg}) }}\n}}", comment=comment, func_name=name.trim_start_matches("rte_"), name=name, rust_args=rust_arg_names.join(", "), ret=ret, c_arg=arg_names.join(", ")));
             }
         }
         self.eal_function_use_defs = use_def_map.values().cloned().collect();
+        self.global_eal_function_use_defs = global_use_def_map.values().cloned().collect();
     }
 
     /// Generate wrappers for static functions and create explicit links for PMDs.
@@ -794,6 +810,15 @@ impl State {
             "%static_eal_functions%",
             &self
                 .eal_function_use_defs
+                .iter()
+                .map(|item| item.replace('\n', "\n\t"))
+                .join("\n"),
+        );
+
+        let formatted_string = formatted_string.replace(
+            "%global_static_eal_functions%",
+            &self
+                .global_eal_function_use_defs
                 .iter()
                 .map(|item| item.replace('\n', "\n\t"))
                 .join("\n"),
