@@ -78,7 +78,7 @@ impl LCoreId {
 
     /// Run a closure on this core.
     pub fn run<F: FnOnce() + Send>(&self, f: F) {
-        let mut f: Box<dyn FnOnce> = Box::new(f);
+        let mut f: Box<dyn FnOnce()> = Box::new(f);
         // Safety: foreign function.
         unsafe {
             let fn_ptr = Box::into_raw(f);
