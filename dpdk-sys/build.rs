@@ -773,7 +773,7 @@ impl State {
             .iter()
             .map(|name| {
                 format!(
-                    "pub use dpdk::{prefix}{name} as {name};",
+                    "pub use crate::dpdk::{prefix}{name} as {name};",
                     prefix = PREFIX,
                     name = name
                 )
