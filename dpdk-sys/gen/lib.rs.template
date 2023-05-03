@@ -1,22 +1,6 @@
 
 %static_use_defs%
 
-#[allow(warnings, clippy::all)]
-extern "C" {
-%explicit_use_defs%
-}
-
-/// Return persist links
-#[allow(warnings, clippy::all)]
-pub fn load_drivers() {
-    // # Safety
-    // Following function calls return function pointers.
-    // In most cases, they have no effect.
-    unsafe {
-%explicit_invokes%
-    }
-}
-
 /// Auto-generated Static EAL functions
 /// Used as `eal.rte_function`.
 /// 

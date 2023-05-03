@@ -2,10 +2,6 @@
 
 %static_impls%
 
-%linkable_extern_defs%
-
-%explicit_pmd_links%
-
 // Following code block is copied from `drivers/mempool/ring`.
 // Original DPDK hash: d7142fbae16f185e11bfa44be061399afc40a1be
 // TODO Automate this process.

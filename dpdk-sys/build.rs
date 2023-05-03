@@ -263,7 +263,6 @@ impl State {
         let include_dir = self.include_path.as_ref().unwrap();
         let dpdk_config = self.dpdk_config.as_ref().unwrap();
         // dlb drivers have duplicated enum definitions.
-        let blacklist = vec!["rte_pmd_dlb", "rte_pmd_dlb2", "rte_baseband_acc"];
         let mut headers = vec![];
         for entry in include_dir.read_dir().expect("read_dir failed") {
             if let Ok(entry) = entry {
@@ -273,7 +272,7 @@ impl State {
                     continue;
                 }
                 if let Some(stem) = path.file_stem() {
-                    if blacklist.contains(&stem.to_str().unwrap()) {
+                    if stem.to_str().unwrap().starts_with("rte_pmd_") {
                         continue;
                     }
                 }
@@ -302,7 +301,7 @@ impl State {
         ];
         // Remove blacklist headers
         let blacklist_prefix = vec!["rte_acc_"];
-        let mut name_set = vec![];
+        let mut name_set: Vec<String> = vec![];
         for file in &headers {
             let file_name = String::from(file.file_stem().unwrap().to_str().unwrap());
             name_set.push(file_name);
@@ -338,6 +337,8 @@ impl State {
                 Ordering::Greater => Ordering::Greater,
             }
         });
+        new_vec.insert(0, "rte_config.h".into());
+        new_vec.insert(0, "rte_common.h".into());
         new_vec.dedup();
         headers = new_vec;
 
@@ -390,81 +391,16 @@ impl State {
         .iter()
         .map(|(c_type, rust_type)| (String::from(*c_type), String::from(*rust_type)))
         .collect();
-        let headers_whitelist = vec![
-            // From librte_eal/include/generic
-            "rte_atomic.h",
-            "rte_byteorder.h",
-            "rte_cpuflags.h",
-            "rte_cycles.h",
-            "rte_io.h",
-            "rte_mcslock.h",
-            "rte_memcpy.h",
-            "rte_pause.h",
-            "rte_prefetch.h",
-            "rte_rwlock.h",
-            "rte_spinlock.h",
-            "rte_ticketlock.h",
-            "rte_vect.h",
-            // From librte_eal/include
-            // "rte_alarm.h",
-            // "rte_bitmap.h",
-            // "rte_branch_prediction.h",
-            // "rte_bus.h",
-            // "rte_class.h",
-            "rte_common.h",
-            // "rte_compat.h",
-            // "rte_debug.h",
-            // "rte_dev.h",
-            // "rte_devargs.h",
-            // "rte_eal_interrupts.h",
-            // "rte_eal_memconfig.h",
-            // "rte_eal.h",
-            // "rte_errno.h",
-            // "rte_fbarray.h",
-            // "rte_function_versioning.h",
-            // "rte_hexdump.h",
-            // "rte_hypervisor.h",
-            // "rte_interrupts.h",
-            // "rte_keepalive.h",
-            // "rte_launch.h",
-            // "rte_lcore.h",
-            // "rte_log.h",
-            // "rte_malloc.h",
-            // "rte_memory.h",
-            // "rte_memzone.h",
-            // "rte_option.h",
-            // "rte_pci_dev_feature_defs.h",
-            // "rte_pci_dev_features.h",
-            // "rte_per_lcore.h",
-            "rte_random.h",
-            // "rte_reciprocal.h",
-            // "rte_service_component.h",
-            // "rte_service.h",
-            // "rte_string_fns.h",
-            // "rte_tailq.h",
-            // "rte_test.h",
-            // "rte_thread.h",
-            "rte_time.h",
-            "rte_uuid.h",
-            "rte_version.h",
-            // "rte_vfio.h",
-        ];
 
         // Set of function definition strings (Rust), coupled with function names.
         // This will prevent duplicated function definitions.
         let mut use_def_map = HashMap::new();
         let mut global_use_def_map = HashMap::new();
-
-        for header_name in &headers_whitelist {
-            let header_path = self.include_path.as_ref().unwrap().join(header_name);
-            if !header_path.exists() {
-                // In case where our whitelist is outdated.
-                println!("cargo:warning=EAL header whitelist is outdated. Contact maintainers.");
-                continue;
-            }
+        let target_path = self.out_path.join("dpdk.h");
+        {
             let clang = clang::Clang::new().unwrap();
             let index = clang::Index::new(&clang, true, true);
-            let trans_unit = self.trans_unit_from_header(&index, header_path);
+            let trans_unit = self.trans_unit_from_header(&index, target_path);
 
             // Iterate through each EAL header files and extract function definitions.
             'each_function: for f in trans_unit
@@ -646,77 +582,6 @@ impl State {
             .map(|(def_, decl_)| format!("{}{}", def_, decl_))
             .join("\n");
 
-        // List of manually enabled DPDK PMDs
-        let mut linkable_whitelist: Vec<_> = vec![
-            "rte_pmd_ixgbe_set_all_queues_drop_en", // ixgbe
-            "rte_pmd_i40e_ping_vfs",                // i40e
-            "e1000_igb_init_log",                   // e1000
-            "ice_release_vsi",                      // ice
-            "vmxnet3_dev_tx_queue_release",         // vmxnet3
-            "virtio_dev_pause",                     // virtio
-            "softnic_thread_free",                  // softnic
-            // "ipn3ke_hw_tm_init", // ipn3ke (currently not enabled)
-            // "mlx4_fd_set_non_blocking", // mlx4 (currently not enabled)
-            // "mlx5_set_cksum_table", // mlx5 (currently not enabled)
-            "iavf_prep_pkts",                    // iavf
-            "fm10k_get_pcie_msix_count_generic", // fm10k
-        ]
-        .iter()
-        .map(|name| (*name).to_string())
-        .collect();
-
-        // List of non-static PMD-specific functions used to create symbolic dependencies to PMDs.
-        let mut linkable_extern_def_list: Vec<_> = vec![
-            "void e1000_igb_init_log(void)",                           // e1000
-            "int ice_release_vsi(struct ice_vsi *vsi)",                // ice
-            "void vmxnet3_dev_tx_queue_release(void *txq)",            // vmxnet3
-            "int virtio_dev_pause(struct rte_eth_dev *dev)",           // virtio
-            "void softnic_thread_free(struct pmd_internals *softnic)", // softnic
-            // "int ipn3ke_hw_tm_init(struct ipn3ke_hw *hw)", // ipn3ke (currently not enabled)
-            // "int mlx4_fd_set_non_blocking(int fd)", // mlx4 (currently not enabled)
-            // "void mlx5_set_cksum_table(void)", // mlx5 (currently not enabled)
-            "uint16_t iavf_prep_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)", // iavf
-            "uint16_t fm10k_get_pcie_msix_count_generic(struct fm10k_hw *hw)", // fm10k
-        ]
-        .iter()
-        .map(|name| (*name).to_string())
-        .collect();
-
-        // If non-default net drivers are enabled (ex. MLX5), add their PMD to the list.
-        for link in &self.dpdk_links {
-            let libname = link.file_name().unwrap().to_str().unwrap();
-
-            if libname == "librte_pmd_mlx5.a" {
-                linkable_whitelist.push("mlx5_set_cksum_table".to_string());
-                linkable_extern_def_list.push("void mlx5_set_cksum_table(void)".to_string());
-                break;
-            }
-        }
-
-        // Currently, we use whitelist instead of extracted function list from DPDK library.  See
-        // `linkable_pmd_functions` field of `State` for more information.
-        self.linkable_pmd_functions = linkable_whitelist;
-
-        // Create `extern` definition for each symbol.
-        let linkable_extern_defs = linkable_extern_def_list
-            .iter()
-            .map(|name| format!("extern {name};", name = name))
-            .join("\n");
-
-        // Create explicit symbolic links to PMDs from `rust-dpdk-sys` rust library.  We will
-        // normalize each function symbol to return its address.
-        let perlist_links = self
-            .linkable_pmd_functions
-            .iter()
-            .map(|name| {
-                format!(
-                    "void* {prefix}{name}() {{\n\treturn {name};\n}}",
-                    prefix = PREFIX,
-                    name = name
-                )
-            })
-            .join("\n");
-
         // Generate header file from template
         let mut template = File::open(header_template).unwrap();
         let mut template_string = String::new();
@@ -730,9 +595,6 @@ impl State {
         let mut template_string = String::new();
         template.read_to_string(&mut template_string).ok();
         let formatted_string = template_string.replace("%static_impls%", &static_impls);
-        let formatted_string =
-            formatted_string.replace("%linkable_extern_defs%", &linkable_extern_defs);
-        let formatted_string = formatted_string.replace("%explicit_pmd_links%", &perlist_links);
         let mut target = File::create(source_path).unwrap();
         target.write_fmt(format_args!("{}", &formatted_string)).ok();
     }
@@ -779,32 +641,11 @@ impl State {
             })
             .join("\n");
 
-        let explicit_use_string = self
-            .linkable_pmd_functions
-            .iter()
-            .map(|name| {
-                format!(
-                    "\tpub fn {prefix}{name}() -> *mut ::std::os::raw::c_void;",
-                    prefix = PREFIX,
-                    name = name
-                )
-            })
-            .join("\n");
-        let explicit_invoke_string = self
-            .linkable_pmd_functions
-            .iter()
-            .map(|name| format!("\t\t{prefix}{name}();", prefix = PREFIX, name = name))
-            .join("\n");
-
         let mut template = File::open(template_path).unwrap();
         let mut template_string = String::new();
         template.read_to_string(&mut template_string).ok();
 
         let formatted_string = template_string.replace("%static_use_defs%", &static_use_string);
-        let formatted_string =
-            formatted_string.replace("%explicit_use_defs%", &explicit_use_string);
-        let formatted_string =
-            formatted_string.replace("%explicit_invokes%", &explicit_invoke_string);
         let formatted_string = formatted_string.replace(
             "%static_eal_functions%",
             &self
@@ -854,22 +695,83 @@ impl State {
             lib_path.to_str().unwrap()
         );
 
+        let pmd_whitelist = vec![
+            ("rte_net_af_packet", vec![]),
+            ("rte_net_af_xdp", vec!["xdp", "bpf"]),
+            ("rte_net_ark", vec![]),
+            ("rte_net_avp", vec![]),
+            ("rte_net_axgbe", vec![]),
+            ("rte_net_bnx2x", vec!["z"]),
+            ("rte_net_bnxt", vec![]),
+            ("rte_net_bonding", vec![]),
+            ("rte_net_cxgbe", vec![]),
+            ("rte_net_e1000", vec![]),
+            ("rte_net_ena", vec![]),
+            ("rte_net_enetfec", vec![]),
+            ("rte_net_enic", vec![]),
+            ("rte_net_failsafe", vec![]),
+            ("rte_net_fm10k", vec![]),
+            ("rte_net_gve", vec![]),
+            ("rte_net_hinic", vec![]),
+            ("rte_net_hns3", vec![]),
+            ("rte_net_i40e", vec![]),
+            ("rte_net_ionic", vec![]),
+            ("rte_net_ixgbe", vec![]),
+            ("rte_net_kni", vec![]),
+            ("rte_net_liquidio", vec![]),
+            ("rte_net_memif", vec![]),
+            ("rte_net_mlx4", vec!["mlx4", "ibverbs"]),
+            ("rte_net_mlx5", vec!["mlx5", "ibverbs"]),
+            ("rte_net_mvneta", vec!["musdk"]),
+            ("rte_net_mvpp2", vec!["musdk"]),
+            ("rte_net_netvsc", vec![]),
+            ("rte_net_nfp", vec![]),
+            ("rte_net_ngbe", vec![]),
+            ("rte_net_null", vec![]),
+            ("rte_net_pcap", vec!["pcap"]),
+            ("rte_net_octeon_ep", vec![]),
+            ("rte_net_octeontx", vec![]),
+            ("rte_net_ring", vec![]),
+            ("rte_net_sfc", vec!["atomic"]),
+            ("rte_net_softnic", vec![]),
+            ("rte_net_tap", vec![]),
+            ("rte_net_thunderx", vec![]),
+            ("rte_net_txgbe", vec![]),
+            ("rte_net_vhost", vec![]),
+            ("rte_net_virtio", vec![]),
+            ("rte_net_vmxnet3", vec![]),
+        ];
+        let mut additional_libs: Vec<&'static str> = vec![];
+
         // Legacy mode: Rust cargo cannot recognize library groups (libdpdk.a).
         let format = Regex::new(r"lib(.*)\.(a)").unwrap();
-        for link in &self.dpdk_links {
+        'outer: for link in &self.dpdk_links {
             let lib_name = link.file_name().unwrap().to_str().unwrap();
 
             if let Some(capture) = format.captures(lib_name) {
                 let link_name = &capture[1];
                 if link_name == "dpdk" {
                     continue;
-                } else if link_name == "rte_pmd_mlx5" {
-                    // MLX5 PMD requires additional liniking of two libraries
-                    println!("cargo:rustc-link-lib=ibverbs");
-                    println!("cargo:rustc-link-lib=mlx5");
                 }
-                println!("cargo:rustc-link-lib=static={}", link_name);
+                for (name, deps) in pmd_whitelist.iter() {
+                    if *name == link_name {
+                        additional_libs.extend(deps.iter());
+                        println!(
+                            "cargo:rustc-link-lib=static:+whole-archive,-bundle={}",
+                            link_name
+                        );
+                        continue 'outer;
+                    }
+                }
+                if link_name.starts_with("rte_net_") {
+                    continue;
+                }
+                println!("cargo:rustc-link-lib={}", link_name);
             }
+        }
+        additional_libs.dedup();
+        for dep in additional_libs {
+            println!("cargo:rustc-link-lib={}", dep);
         }
         println!("cargo:rustc-link-lib=numa");
     }
