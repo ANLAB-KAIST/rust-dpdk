@@ -185,7 +185,7 @@ impl State {
             self.include_path = Some(PathBuf::from("/usr/local/include"));
             self.library_path = Some(PathBuf::from(format!("/usr/local/lib/{}", machine_string)));
         } else {
-            panic!("DPDK is not installed on your system! (Cannot find /usr/local/include/dpdk/rte_config.h)")
+            panic!("DPDK is not installed on your system! (Cannot find /usr/local/include/rte_config.h)")
         }
         println!(
             "cargo:rerun-if-changed={}",
@@ -752,7 +752,6 @@ impl State {
             .clang_arg(dpdk_config_path.to_str().unwrap())
             .clang_arg("-march=native")
             .clang_arg("-Wno-everything")
-            .rustfmt_bindings(true)
             .opaque_type("vmbus_bufring")
             .opaque_type("rte_avp_desc")
             .opaque_type("rte_.*_hdr")
