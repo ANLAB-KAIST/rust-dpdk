@@ -1,6 +1,10 @@
 
 %static_use_defs%
 
+pub mod constants {
+%static_constants%
+}
+
 /// Auto-generated Static EAL functions
 /// Used as `eal.rte_function`.
 /// 

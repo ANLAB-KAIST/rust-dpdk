@@ -18,10 +18,11 @@ Rust binding for Intel DPDK.
 bindgen = "0.65"
 num_cpus = "1"
 regex = "1"
-clang = { version = "1", features = ["runtime", "clang_3_6"] }
+clang = { version = "1", features = ["runtime", "clang_3_9"] }
 cc = "1"
 etrace = "1"
 itertools = "0.10"
+threadpool = "1"
 
 [features]
 default = []

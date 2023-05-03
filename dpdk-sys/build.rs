@@ -12,10 +12,12 @@ use regex::Regex;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::fs::*;
 use std::io::*;
 use std::path::*;
 use std::process::Command;
+use threadpool::ThreadPool;
 
 /// We make additional wrapper functions for existing bindings.
 /// To avoid collision, we add a magic prefix for each.
@@ -71,14 +73,8 @@ struct State {
     /// Names of `static inline` functions found in DPDK headers.
     static_functions: Vec<String>,
 
-    /// Names of linkable (non-static) PMD-specific functions. We use them to create explicit
-    /// symbolic dependencies to PMDs.
-    ///
-    /// Currently, DPDK's conditional build is incomplete. For example, declaration of
-    /// `rte_pmd_ixgbe_bypass_wd_reset` is controlled by `RTE_LIBRTE_IXGBE_BYPASS`, but its
-    /// definition is not.  Thus, we fallback to use explicit whitelist rather than automatically
-    /// detect non-static symbols.
-    linkable_pmd_functions: Vec<String>,
+    /// Macro constants are not expanded when it uses other macro functions.
+    static_constants: Vec<(String, String, u64)>,
 }
 
 impl State {
@@ -99,7 +95,7 @@ impl State {
             eal_function_use_defs: Default::default(),
             global_eal_function_use_defs: Default::default(),
             static_functions: Default::default(),
-            linkable_pmd_functions: Default::default(),
+            static_constants: Default::default(),
         }
     }
 
@@ -109,6 +105,7 @@ impl State {
         &self,
         index: &'a clang::Index,
         header_path: PathBuf,
+        do_macro: bool,
     ) -> clang::TranslationUnit<'a> {
         let mut argument = vec![
             "-march=native".into(),
@@ -131,6 +128,7 @@ impl State {
         }
         let trans_unit = index
             .parser(header_path)
+            .detailed_preprocessing_record(do_macro)
             .arguments(&argument)
             .parse()
             .unwrap();
@@ -400,7 +398,7 @@ impl State {
         {
             let clang = clang::Clang::new().unwrap();
             let index = clang::Index::new(&clang, true, true);
-            let trans_unit = self.trans_unit_from_header(&index, target_path);
+            let trans_unit = self.trans_unit_from_header(&index, target_path, false);
 
             // Iterate through each EAL header files and extract function definitions.
             'each_function: for f in trans_unit
@@ -412,8 +410,15 @@ impl State {
                 let name = some_or!(f.get_name(), continue);
                 let storage = some_or!(f.get_storage_class(), continue);
                 let return_type = some_or!(f.get_result_type(), continue);
-                let is_decl = f.is_definition();
-                let comment = strip_comments(some_or!(f.get_comment(), continue));
+                let is_decl = f.is_declaration();
+                let is_def = f.is_definition();
+                let is_inline_fn = f.is_inline_function();
+
+                let comment = f
+                    .get_comment()
+                    .map(|x| strip_comments(x))
+                    .unwrap_or("".to_string());
+
                 if use_def_map.contains_key(&name) {
                     // Skip duplicate
                     continue;
@@ -422,13 +427,13 @@ impl State {
                     // Skip hidden implementations
                     continue;
                 }
-                if !(storage == clang::StorageClass::None && !is_decl
-                    || is_decl && storage == clang::StorageClass::Static)
-                {
-                    // We only accept if a function definition is found, or a `static inline`
-                    // function declaration is found.
+                if clang::StorageClass::Static == storage && !(is_decl && is_inline_fn) {
                     continue;
                 }
+                if clang::StorageClass::None == storage && !is_def {
+                    continue;
+                }
+                // println!("cargo:warning={} {} {} {:?}", name, is_decl, f.is_inline_function(), storage);
 
                 // Extract type names in C and Rust.
                 let c_return_type_string = return_type.get_display_name();
@@ -491,7 +496,7 @@ impl State {
         let header_path = self.out_path.join("dpdk.h");
         let clang = clang::Clang::new().unwrap();
         let index = clang::Index::new(&clang, true, true);
-        let trans_unit = self.trans_unit_from_header(&index, header_path);
+        let trans_unit = self.trans_unit_from_header(&index, header_path.clone(), false);
 
         // List of `static inline` functions (definitions).
         let mut static_def_list = vec![];
@@ -531,13 +536,18 @@ impl State {
             let name = some_or!(f.get_name(), continue);
             let storage = some_or!(f.get_storage_class(), continue);
             let return_type = some_or!(f.get_result_type(), continue);
-            let is_decl = f.is_definition();
+            let is_inline = f.is_inline_function();
+            let is_decl = f.is_declaration();
 
-            if storage == clang::StorageClass::None && !is_decl && name.starts_with("rte_pmd_") {
-                // non-static function definition for a PMD is found.
-                self.linkable_pmd_functions.push(name);
-            } else if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
+            if storage == clang::StorageClass::Static
+                && is_decl
+                && is_inline
+                && !name.starts_with('_')
+            {
                 // Declaration of static function is found (skip if function name starts with _).
+                if self.static_functions.contains(&name) {
+                    continue;
+                }
                 let mut arg_strings = Vec::new();
                 let mut param_strings = Vec::new();
                 let return_type_string = return_type.get_display_name();
@@ -569,9 +579,133 @@ impl State {
             }
         }
 
-        let header_path = self.out_path.join("static.h");
+        let trans_unit = self.trans_unit_from_header(&index, header_path, true);
+        let mut macro_candidates = Vec::new();
+        for f in trans_unit
+            .get_entity()
+            .get_children()
+            .into_iter()
+            .filter(|e| e.get_kind() == clang::EntityKind::MacroDefinition)
+        {
+            let name = some_or!(f.get_name(), continue);
+            if f.is_builtin_macro() {
+                continue;
+            }
+            if f.is_function_like_macro() {
+                continue;
+            }
+            if !name.starts_with("RTE_") {
+                continue;
+            }
+            macro_candidates.push(name);
+        }
+        macro_candidates.dedup();
+        macro_candidates.sort();
+        // macro_candidates.drain(2..);
+
+        let test_template = self.project_path.join("gen/int_test.c");
+        let builder = cc::Build::new();
+        let compiler = builder.get_compiler();
+        let cc_name = compiler.path().to_str().unwrap().to_string();
+
+        let dpdk_include_path = self.include_path.as_ref().unwrap();
+        let dpdk_config_path = self.dpdk_config.as_ref().unwrap();
+
+        let cpus = num_cpus::get();
+        let pool = ThreadPool::new(cpus);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let dpdk_include = dpdk_include_path.to_str().unwrap();
+        let output_include = self.out_path.to_str().unwrap();
+
+        for name in &macro_candidates {
+            let test_template = test_template.clone();
+            let target_bin_path = self.out_path.join(format!("int_test_{}", name));
+
+            let tx = tx.clone();
+            let name = name.clone();
+            let cc_name = cc_name.clone();
+            let dpdk_include = dpdk_include.to_string();
+            let output_include = output_include.to_string();
+            let dpdk_config_path = dpdk_config_path.clone();
+            let task = move || {
+                let mut return_value = None;
+                let ret = Command::new(cc_name.clone())
+                    .arg("-Wall")
+                    .arg("-Wextra")
+                    .arg("-Werror")
+                    .arg("-std=c99")
+                    .arg(format!("-I{}", dpdk_include))
+                    .arg(format!("-I{}", output_include))
+                    .arg("-imacros")
+                    .arg(dpdk_config_path.to_str().unwrap())
+                    .arg("-march=native")
+                    .arg("-D__CHECK_FMT=U64_FMT")
+                    .arg(format!("-D__CHECK_VAL={}", name))
+                    .arg("-o")
+                    .arg(target_bin_path.clone())
+                    .arg(test_template.clone())
+                    .arg("-lrte_eal")
+                    .output();
+                if let Ok(ret) = ret {
+                    if ret.status.success() {
+                        let ret = Command::new(target_bin_path.clone()).output().unwrap();
+                        let str = String::from_utf8(ret.stdout).unwrap();
+                        let val: u64 = str.trim().parse().unwrap();
+                        return_value = Some((name.clone(), "u64".into(), val));
+                    }
+                }
+                if return_value.is_none() {
+                    let ret = Command::new(cc_name.clone())
+                        .arg("-Wall")
+                        .arg("-Wextra")
+                        .arg("-Werror")
+                        .arg("-std=c99")
+                        .arg(format!("-I{}", dpdk_include))
+                        .arg(format!("-I{}", output_include))
+                        .arg("-imacros")
+                        .arg(dpdk_config_path.to_str().unwrap())
+                        .arg("-march=native")
+                        .arg("-D__CHECK_FMT=U32_FMT")
+                        .arg(format!("-D__CHECK_VAL={}", name))
+                        .arg("-o")
+                        .arg(target_bin_path.clone())
+                        .arg(test_template.clone())
+                        .arg("-lrte_eal")
+                        .output();
+                    if let Ok(ret) = ret {
+                        if ret.status.success() {
+                            let ret = Command::new(target_bin_path.clone()).output().unwrap();
+                            let str = String::from_utf8(ret.stdout).unwrap();
+                            let val: u64 = str.trim().parse().unwrap();
+                            return_value = Some((name.clone(), "u32".into(), val));
+                        }
+                    }
+                }
+                tx.send(return_value)
+                    .expect("channel will be there waiting for the pool");
+                if target_bin_path.exists() {
+                    fs::remove_file(target_bin_path).unwrap();
+                }
+            };
+            pool.execute(task);
+            // task();
+        }
+        pool.join();
+
+        for _ in 0..macro_candidates.len() {
+            let val = rx.recv().unwrap();
+            if let Some((name, int_type, val)) = val {
+                println!("cargo:warning=macro {}: {} = {}", name, int_type, val);
+                self.static_constants.push((name, int_type, val));
+            }
+        }
+
+        // gcc -S test.c -Wall -Wextra -std=c99 -Werror
+
+        let header_path: PathBuf = self.out_path.join("static.h");
         let header_template = self.project_path.join("gen/static.h.template");
-        let source_path = self.out_path.join("static.c");
+        let source_path: PathBuf = self.out_path.join("static.c");
         let source_template = self.project_path.join("gen/static.c.template");
 
         let header_defs = static_def_list
@@ -646,6 +780,18 @@ impl State {
         template.read_to_string(&mut template_string).ok();
 
         let formatted_string = template_string.replace("%static_use_defs%", &static_use_string);
+
+        let formatted_string = formatted_string.replace(
+            "%static_constants%",
+            &self
+                .static_constants
+                .iter()
+                .map(|(name, int_type, val): &(String, String, u64)| {
+                    format!("pub const {}: {} = {};", name, int_type, val)
+                })
+                .join("\n"),
+        );
+
         let formatted_string = formatted_string.replace(
             "%static_eal_functions%",
             &self
@@ -686,8 +832,8 @@ impl State {
             .flag("-march=native")
             .flag("-imacros")
             .flag(dpdk_config.to_str().unwrap())
-            .flag(&format!("-L{}", lib_path.to_str().unwrap()))
-            .flag("-ldpdk")
+            // .flag(&format!("-L{}", lib_path.to_str().unwrap()))
+            // .flag("-ldpdk")
             .compile("lib_static_wrapper.a");
 
         println!(
