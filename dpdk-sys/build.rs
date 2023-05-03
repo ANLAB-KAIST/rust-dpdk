@@ -717,7 +717,7 @@ impl State {
             ("rte_net_i40e", vec![]),
             ("rte_net_ionic", vec![]),
             ("rte_net_ixgbe", vec![]),
-            ("rte_net_kni", vec![]),
+            // ("rte_net_kni", vec![]), // Kni causes crash (Cannot init trace).
             ("rte_net_liquidio", vec![]),
             ("rte_net_memif", vec![]),
             ("rte_net_mlx4", vec!["mlx4", "ibverbs"]),
