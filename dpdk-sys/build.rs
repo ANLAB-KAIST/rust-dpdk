@@ -587,6 +587,8 @@ impl State {
 
         let trans_unit = self.trans_unit_from_header(&index, header_path, true);
         let mut macro_candidates = Vec::new();
+
+        let macro_const_fmt = Regex::new(r"[A-Z][A-Z0-9]*(\_[A-Z][A-Z0-9]*)*").unwrap();
         for f in trans_unit
             .get_entity()
             .get_children()
@@ -600,7 +602,7 @@ impl State {
             if f.is_function_like_macro() {
                 continue;
             }
-            if !name.starts_with("RTE_") {
+            if !macro_const_fmt.is_match(name.as_str()) {
                 continue;
             }
             macro_candidates.push(name.trim().to_string());
@@ -672,7 +674,8 @@ impl State {
                             let ret = Command::new(target_bin_path.clone()).output().unwrap();
                             let str = String::from_utf8(ret.stdout).unwrap();
                             let val: u64 = str.trim().parse().unwrap();
-                            return_value = Some((name.clone(), "u64".into(), val));
+                            return_value =
+                                Some((name.clone().to_ascii_uppercase(), "u64".into(), val));
                         }
                     }
                     if return_value.is_none() {
@@ -698,7 +701,8 @@ impl State {
                                 let ret = Command::new(target_bin_path.clone()).output().unwrap();
                                 let str = String::from_utf8(ret.stdout).unwrap();
                                 let val: u64 = str.trim().parse().unwrap();
-                                return_value = Some((name.clone(), "u32".into(), val));
+                                return_value =
+                                    Some((name.clone().to_ascii_uppercase(), "u32".into(), val));
                             }
                         }
                     }
@@ -930,11 +934,11 @@ impl State {
         let mut additional_libs: Vec<&'static str> = vec![];
 
         // Legacy mode: Rust cargo cannot recognize library groups (libdpdk.a).
-        let format = Regex::new(r"lib(.*)\.(a)").unwrap();
+        let lib_name_format = Regex::new(r"lib(.*)\.(a)").unwrap();
         'outer: for link in &self.dpdk_links {
             let lib_name = link.file_name().unwrap().to_str().unwrap();
 
-            if let Some(capture) = format.captures(lib_name) {
+            if let Some(capture) = lib_name_format.captures(lib_name) {
                 let link_name = &capture[1];
                 if link_name == "dpdk" {
                     continue;
