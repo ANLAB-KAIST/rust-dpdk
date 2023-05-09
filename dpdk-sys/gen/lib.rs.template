@@ -1,23 +1,12 @@
 
 %static_use_defs%
 
-#[allow(warnings, clippy::all)]
-extern "C" {
-%explicit_use_defs%
-}
-
-/// Return persist links
-#[allow(warnings, clippy::all)]
-pub fn load_drivers() {
-    // # Safety
-    // Following function calls return function pointers.
-    // In most cases, they have no effect.
-    unsafe {
-%explicit_invokes%
-    }
+pub mod constants {
+%static_constants%
 }
 
 /// Auto-generated Static EAL functions
+/// Used as `eal.rte_function`.
 /// 
 /// # Safety
 /// This implementation must be used after `rte_eal_init` and never used after `rte_eal_cleanup`.
@@ -27,6 +16,7 @@ pub unsafe trait EalStaticFunctions {
 }
 
 /// Auto-generated Static EAL functions (Global)
+/// Used as `Eal::rte_function`.
 /// 
 /// # Safety
 /// This implementation must be used after `rte_eal_init` and never used after `rte_eal_cleanup`.
