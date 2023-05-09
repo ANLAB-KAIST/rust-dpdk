@@ -422,8 +422,8 @@ impl State {
 
                 let comment = f
                     .get_comment()
-                    .map(|x| strip_comments(x))
-                    .unwrap_or("".to_string());
+                    .map(strip_comments)
+                    .unwrap_or_else(|| "".to_string());
 
                 if use_def_map.contains_key(&name) {
                     // Skip duplicate
