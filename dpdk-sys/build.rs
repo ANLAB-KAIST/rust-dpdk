@@ -17,7 +17,10 @@ use std::fs::*;
 use std::io::*;
 use std::path::*;
 use std::process::Command;
-use threadpool::ThreadPool;
+use std::sync::Arc;
+use std::time::Instant;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 /// We make additional wrapper functions for existing bindings.
 /// To avoid collision, we add a magic prefix for each.
@@ -56,7 +59,7 @@ struct State {
     library_path: Option<PathBuf>,
 
     /// List of DPDK header files.
-    dpdk_headers: Vec<PathBuf>,
+    dpdk_headers: Vec<String>,
 
     /// List of DPDK lib files.
     dpdk_links: Vec<PathBuf>,
@@ -335,13 +338,19 @@ impl State {
                 Ordering::Greater => Ordering::Greater,
             }
         });
-        new_vec.insert(0, "rte_config.h".into());
-        new_vec.insert(0, "rte_common.h".into());
-        new_vec.dedup();
-        headers = new_vec;
+
+        let mut header_names: Vec<_> = new_vec
+            .into_iter()
+            .map(|header| header.file_name().unwrap().to_str().unwrap().to_string())
+            .filter(|x| x != "rte_config.h" || x != "rte_common.h")
+            .collect();
+        header_names.sort();
+        header_names.dedup();
+        header_names.insert(0, "rte_config.h".into());
+        header_names.insert(0, "rte_common.h".into());
 
         // Generate all-in-one dpdk header (`dpdk.h`).
-        self.dpdk_headers = headers;
+        self.dpdk_headers = header_names;
         let template_path = self.project_path.join("gen/dpdk.h.template");
         let target_path = self.out_path.join("dpdk.h");
         let mut template = File::open(template_path).unwrap();
@@ -350,10 +359,7 @@ impl State {
         template.read_to_string(&mut template_string).ok();
         let mut headers_string = String::new();
         for header in &self.dpdk_headers {
-            headers_string += &format!(
-                "#include \"{}\"\n",
-                header.file_name().unwrap().to_str().unwrap()
-            );
+            headers_string += &format!("#include \"{}\"\n", header);
         }
         let formatted_string = template_string.replace("%header_list%", &headers_string);
         target.write_fmt(format_args!("{}", formatted_string)).ok();
@@ -597,11 +603,11 @@ impl State {
             if !name.starts_with("RTE_") {
                 continue;
             }
-            macro_candidates.push(name);
+            macro_candidates.push(name.trim().to_string());
         }
-        macro_candidates.dedup();
         macro_candidates.sort();
-        // macro_candidates.drain(2..);
+        macro_candidates.dedup();
+        // macro_candidates.drain(100..);
 
         let test_template = self.project_path.join("gen/int_test.c");
         let builder = cc::Build::new();
@@ -612,50 +618,38 @@ impl State {
         let dpdk_config_path = self.dpdk_config.as_ref().unwrap();
 
         let cpus = num_cpus::get();
-        let pool = ThreadPool::new(cpus);
 
-        let (tx, rx) = std::sync::mpsc::channel();
+        let workqueue = Arc::new(crossbeam_queue::SegQueue::<String>::new());
+        for name in macro_candidates {
+            workqueue.push(name);
+        }
         let dpdk_include = dpdk_include_path.to_str().unwrap();
         let output_include = self.out_path.to_str().unwrap();
 
-        for name in &macro_candidates {
+        let compile_start_at = Instant::now();
+        let mut wait_list = Vec::new();
+        let start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        for _idx in 0..cpus {
             let test_template = test_template.clone();
-            let target_bin_path = self.out_path.join(format!("int_test_{}", name));
 
-            let tx = tx.clone();
-            let name = name.clone();
+            let queue = workqueue.clone();
             let cc_name = cc_name.clone();
             let dpdk_include = dpdk_include.to_string();
             let output_include = output_include.to_string();
             let dpdk_config_path = dpdk_config_path.clone();
+            let out_path = self.out_path.clone();
             let task = move || {
-                let mut return_value = None;
-                let ret = Command::new(cc_name.clone())
-                    .arg("-Wall")
-                    .arg("-Wextra")
-                    .arg("-Werror")
-                    .arg("-std=c99")
-                    .arg(format!("-I{}", dpdk_include))
-                    .arg(format!("-I{}", output_include))
-                    .arg("-imacros")
-                    .arg(dpdk_config_path.to_str().unwrap())
-                    .arg("-march=native")
-                    .arg("-D__CHECK_FMT=U64_FMT")
-                    .arg(format!("-D__CHECK_VAL={}", name))
-                    .arg("-o")
-                    .arg(target_bin_path.clone())
-                    .arg(test_template.clone())
-                    .arg("-lrte_eal")
-                    .output();
-                if let Ok(ret) = ret {
-                    if ret.status.success() {
-                        let ret = Command::new(target_bin_path.clone()).output().unwrap();
-                        let str = String::from_utf8(ret.stdout).unwrap();
-                        let val: u64 = str.trim().parse().unwrap();
-                        return_value = Some((name.clone(), "u64".into(), val));
+                let mut results = Vec::new();
+                while let Some(name) = queue.pop() {
+                    let target_bin_path =
+                        out_path.join(format!("int_test_{}_{}", start_time, name));
+                    if target_bin_path.exists() {
+                        fs::remove_file(target_bin_path.clone()).unwrap();
                     }
-                }
-                if return_value.is_none() {
+                    let mut return_value = None;
                     let ret = Command::new(cc_name.clone())
                         .arg("-Wall")
                         .arg("-Wextra")
@@ -666,7 +660,7 @@ impl State {
                         .arg("-imacros")
                         .arg(dpdk_config_path.to_str().unwrap())
                         .arg("-march=native")
-                        .arg("-D__CHECK_FMT=U32_FMT")
+                        .arg("-D__CHECK_FMT=U64_FMT")
                         .arg(format!("-D__CHECK_VAL={}", name))
                         .arg("-o")
                         .arg(target_bin_path.clone())
@@ -678,28 +672,74 @@ impl State {
                             let ret = Command::new(target_bin_path.clone()).output().unwrap();
                             let str = String::from_utf8(ret.stdout).unwrap();
                             let val: u64 = str.trim().parse().unwrap();
-                            return_value = Some((name.clone(), "u32".into(), val));
+                            return_value = Some((name.clone(), "u64".into(), val));
                         }
                     }
+                    if return_value.is_none() {
+                        let ret = Command::new(cc_name.clone())
+                            .arg("-Wall")
+                            .arg("-Wextra")
+                            .arg("-Werror")
+                            .arg("-std=c99")
+                            .arg(format!("-I{}", dpdk_include))
+                            .arg(format!("-I{}", output_include))
+                            .arg("-imacros")
+                            .arg(dpdk_config_path.to_str().unwrap())
+                            .arg("-march=native")
+                            .arg("-D__CHECK_FMT=U32_FMT")
+                            .arg(format!("-D__CHECK_VAL={}", name))
+                            .arg("-o")
+                            .arg(target_bin_path.clone())
+                            .arg(test_template.clone())
+                            .arg("-lrte_eal")
+                            .output();
+                        if let Ok(ret) = ret {
+                            if ret.status.success() {
+                                let ret = Command::new(target_bin_path.clone()).output().unwrap();
+                                let str = String::from_utf8(ret.stdout).unwrap();
+                                let val: u64 = str.trim().parse().unwrap();
+                                return_value = Some((name.clone(), "u32".into(), val));
+                            }
+                        }
+                    }
+                    // println!("cargo:warning=compile thread task done {}, {:?}", idx, return_value);
+                    results.push(return_value);
+                    if target_bin_path.exists() {
+                        fs::remove_file(target_bin_path.clone()).unwrap();
+                    }
                 }
-                tx.send(return_value)
-                    .expect("channel will be there waiting for the pool");
-                if target_bin_path.exists() {
-                    fs::remove_file(target_bin_path).unwrap();
-                }
+                // println!("cargo:warning=compile thread terminated {}", idx);
+                results
             };
-            pool.execute(task);
+            let handle = std::thread::spawn(task);
+            wait_list.push(handle);
+            //pool.execute(task);
             // task();
         }
-        pool.join();
+        let mut all_results = Vec::new();
+        for handle in wait_list {
+            let results = handle.join().unwrap();
+            all_results.extend(results);
+        }
 
-        for _ in 0..macro_candidates.len() {
-            let val = rx.recv().unwrap();
+        let mut some_count = 0;
+        let mut none_count = 0;
+        for val in all_results {
             if let Some((name, int_type, val)) = val {
-                println!("cargo:warning=macro {}: {} = {}", name, int_type, val);
+                // println!("cargo:warning=macro {}: {} = {}", name, int_type, val);
                 self.static_constants.push((name, int_type, val));
+                some_count += 1;
+            } else {
+                none_count += 1;
             }
         }
+        let compile_end_at = Instant::now();
+        println!(
+            "cargo:warning=compile time: {:02}s, {}/{} macros processed",
+            (compile_end_at - compile_start_at).as_secs_f64(),
+            some_count,
+            some_count + none_count,
+        );
 
         // gcc -S test.c -Wall -Wextra -std=c99 -Werror
 
@@ -915,6 +955,7 @@ impl State {
                 println!("cargo:rustc-link-lib={}", link_name);
             }
         }
+        additional_libs.sort();
         additional_libs.dedup();
         for dep in additional_libs {
             println!("cargo:rustc-link-lib={}", dep);
