@@ -648,37 +648,17 @@ impl State {
                 while let Some(name) = queue.pop() {
                     let target_bin_path =
                         out_path.join(format!("int_test_{}_{}", start_time, name));
-                    if target_bin_path.exists() {
-                        fs::remove_file(target_bin_path.clone()).unwrap();
-                    }
+
                     let mut return_value = None;
-                    let ret = Command::new(cc_name.clone())
-                        .arg("-Wall")
-                        .arg("-Wextra")
-                        .arg("-Werror")
-                        .arg("-std=c99")
-                        .arg(format!("-I{}", dpdk_include))
-                        .arg(format!("-I{}", output_include))
-                        .arg("-imacros")
-                        .arg(dpdk_config_path.to_str().unwrap())
-                        .arg("-march=native")
-                        .arg("-D__CHECK_FMT=U64_FMT")
-                        .arg(format!("-D__CHECK_VAL={}", name))
-                        .arg("-o")
-                        .arg(target_bin_path.clone())
-                        .arg(test_template.clone())
-                        .arg("-lrte_eal")
-                        .output();
-                    if let Ok(ret) = ret {
-                        if ret.status.success() {
-                            let ret = Command::new(target_bin_path.clone()).output().unwrap();
-                            let str = String::from_utf8(ret.stdout).unwrap();
-                            let val: u64 = str.trim().parse().unwrap();
-                            return_value =
-                                Some((name.clone().to_ascii_uppercase(), "u64".into(), val));
+                    let try_args = vec![
+                        ("U64_FMT", "u64"),
+                        ("ULL_FMT", "u64"), // ("ULL_FMT", "u128")
+                        ("U32_FMT", "u32"),
+                    ];
+                    for (fmt_name, type_name) in try_args {
+                        if target_bin_path.exists() {
+                            fs::remove_file(target_bin_path.clone()).unwrap();
                         }
-                    }
-                    if return_value.is_none() {
                         let ret = Command::new(cc_name.clone())
                             .arg("-Wall")
                             .arg("-Wextra")
@@ -689,7 +669,7 @@ impl State {
                             .arg("-imacros")
                             .arg(dpdk_config_path.to_str().unwrap())
                             .arg("-march=native")
-                            .arg("-D__CHECK_FMT=U32_FMT")
+                            .arg(format!("-D__CHECK_FMT={}", fmt_name))
                             .arg(format!("-D__CHECK_VAL={}", name))
                             .arg("-o")
                             .arg(target_bin_path.clone())
@@ -700,12 +680,19 @@ impl State {
                             if ret.status.success() {
                                 let ret = Command::new(target_bin_path.clone()).output().unwrap();
                                 let str = String::from_utf8(ret.stdout).unwrap();
-                                let val: u64 = str.trim().parse().unwrap();
-                                return_value =
-                                    Some((name.clone().to_ascii_uppercase(), "u32".into(), val));
+                                let val: u64 = str.trim().parse().unwrap(); // See ULL_FMT to use which integer. u64 or u128.
+                                return_value = Some((
+                                    name.clone().to_ascii_uppercase(),
+                                    type_name.into(),
+                                    val,
+                                ));
                             }
                         }
+                        if return_value.is_some() {
+                            break;
+                        }
                     }
+
                     // println!("cargo:warning=compile thread task done {}, {:?}", idx, return_value);
                     results.push(return_value);
                     if target_bin_path.exists() {
