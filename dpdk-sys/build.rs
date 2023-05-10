@@ -194,13 +194,10 @@ impl State {
                 build_config_header.to_str().unwrap()
             );
         }
+        println!("cargo:rerun-if-changed={}", config_header.to_str().unwrap());
         println!(
             "cargo:rerun-if-changed={}",
-            config_header.as_ref().unwrap().to_str().unwrap()
-        );
-        println!(
-            "cargo:rerun-if-changed={}",
-            build_config_header.as_ref().unwrap().to_str().unwrap()
+            build_config_header.to_str().unwrap()
         );
         for entry in self
             .project_path
