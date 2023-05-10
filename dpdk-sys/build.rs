@@ -182,19 +182,25 @@ impl State {
             .expect("failed obtain current machine");
         let machine_string = String::from(String::from_utf8(output.stdout).unwrap().trim());
         let config_header = PathBuf::from("/usr/local/include/rte_config.h");
-        if config_header.exists() {
+        let build_config_header = PathBuf::from("/usr/local/include/rte_build_config.h");
+
+        if config_header.exists() && build_config_header.exists() {
             self.include_path = Some(PathBuf::from("/usr/local/include"));
             self.library_path = Some(PathBuf::from(format!("/usr/local/lib/{}", machine_string)));
         } else {
-            panic!("DPDK is not installed on your system! (Cannot find /usr/local/include/rte_config.h)")
+            panic!(
+                "DPDK is not installed on your system! (Cannot find {} nor {})",
+                config_header.to_str().unwrap(),
+                build_config_header.to_str().unwrap()
+            );
         }
         println!(
             "cargo:rerun-if-changed={}",
-            self.include_path.as_ref().unwrap().to_str().unwrap()
+            config_header.as_ref().unwrap().to_str().unwrap()
         );
         println!(
             "cargo:rerun-if-changed={}",
-            self.library_path.as_ref().unwrap().to_str().unwrap()
+            build_config_header.as_ref().unwrap().to_str().unwrap()
         );
         for entry in self
             .project_path
@@ -957,6 +963,7 @@ impl State {
             ("rte_net_virtio", vec![]),
             ("rte_net_vmxnet3", vec![]),
         ];
+        let mut rte_libs: Vec<_> = Vec::new();
         let mut additional_libs: Vec<&'static str> = vec![];
 
         // Legacy mode: Rust cargo cannot recognize library groups (libdpdk.a).
@@ -982,8 +989,13 @@ impl State {
                 if link_name.starts_with("rte_net_") {
                     continue;
                 }
-                println!("cargo:rustc-link-lib={}", link_name);
+                rte_libs.push(link_name.to_string());
             }
+        }
+        rte_libs.sort();
+        rte_libs.dedup();
+        for rte_dep in rte_libs {
+            println!("cargo:rustc-link-lib={}", rte_dep);
         }
         additional_libs.sort();
         additional_libs.dedup();
