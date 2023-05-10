@@ -1,9 +1,9 @@
 # rust-dpdk
 
-[![Build Status](https://jenkins.redwit.io/buildStatus/icon?job=rust-dpdk%2Fmain)](https://jenkins.redwit.io/job/rust-dpdk/job/main/)
+[![Build Status](https://jenkins.redwit.io/buildStatus/icon?job=ANLAB-KAIST%2Frust-dpdk%2Fmain)](https://jenkins.redwit.io/job/ANLAB-KAIST/job/rust-dpdk/job/main/)
 
-Tested with <https://github.com/rust-lang/rust-bindgen> v0.62.
-Tested with <https://github.com/DPDK/dpdk.git> v20.11.
+Tested with <https://github.com/rust-lang/rust-bindgen> v0.65.
+Tested with <https://github.com/DPDK/dpdk.git> v22.11.
 
 ## Goals
 
@@ -14,13 +14,12 @@ This library is built for following design goals.
 1. Minimize hand-written binding code.
 1. Do not include `bindgen`'s output in this repository.
 1. Statically link DPDK libraries instead of using shared libraries.
-1. (TODO) Rust wrapper (`rust-dpdk`) for low-level DPDK APIs (`rust-dpdk-sys`).
 
-| Library   | No bindgen output | Static linking  | Inline function wrappers | Prevent PMD opt-out | Rust-style wrappers |
-| --------- | ----------------- | --------------- | ------------------------ | ------------------- | ------------------- | 
-| flier     | bindgen snapshot  | O               | O (manual)               | X                   | O                   |
-| netbricks | manual FFI        | X               | X                        | O (via dynload)     | X                   |
-| ANLAB     | ondemand creation | O               | O (automatic)            | O                   | (under construction)|
+| Library   | No bindgen output | Static linking  | Inline function wrappers | Prevent PMD opt-out |
+| --------- | ----------------- | --------------- | ------------------------ | ------------------- |
+| flier     | bindgen snapshot  | O               | O (manual)               | X                   |
+| netbricks | manual FFI        | X               | X                        | O (via dynload)     |
+| ANLAB     | ondemand creation | O               | O (automatic)            | O                   |
 
 ## Prerequisites
 
