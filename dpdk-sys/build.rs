@@ -588,7 +588,7 @@ impl State {
         let trans_unit = self.trans_unit_from_header(&index, header_path, true);
         let mut macro_candidates = Vec::new();
 
-        let macro_const_fmt = Regex::new(r"[A-Z][A-Z0-9]*(\_[A-Z][A-Z0-9]*)*").unwrap();
+        let macro_const_fmt = Regex::new(r"[A-Z][A-Z0-9]*(_[A-Z][A-Z0-9]*)*").unwrap();
         for f in trans_unit
             .get_entity()
             .get_children()
@@ -732,6 +732,45 @@ impl State {
             some_count + none_count,
         );
 
+        let mut zero_prefix_list = Vec::new();
+        for (name, int_type, val) in self.static_constants.iter() {
+            if *val == 0 && int_type == "u32" {
+                let segs = name.split('_').collect::<Vec<_>>();
+                if segs.len() <= 3 {
+                    // 이름이 너무 짧은 경우
+                    continue;
+                }
+                let prefix = segs[..segs.len() - 1].join("_") + "_";
+                zero_prefix_list.push((name.clone(), prefix));
+            }
+        }
+        zero_prefix_list.sort();
+        zero_prefix_list.dedup();
+        let mut change_list = Vec::new();
+        for (other_name, other_int_type, _) in self.static_constants.iter() {
+            for (name, prefix) in zero_prefix_list.iter() {
+                if *other_name != *name
+                    && other_name.starts_with(prefix)
+                    && *other_int_type == "u64"
+                {
+                    change_list.push((name.clone(), other_int_type.clone()));
+                    break;
+                }
+            }
+        }
+        change_list.sort();
+        change_list.dedup();
+        for (name, int_type, val) in self.static_constants.iter_mut() {
+            for (change_name, change_int_type) in change_list.iter() {
+                if *name == *change_name {
+                    println!(
+                        "cargo:warning=macro {}:{}, {} -> {}",
+                        name, val, int_type, change_int_type
+                    );
+                    *int_type = change_int_type.clone();
+                }
+            }
+        }
         // gcc -S test.c -Wall -Wextra -std=c99 -Werror
 
         let header_path: PathBuf = self.out_path.join("static.h");
