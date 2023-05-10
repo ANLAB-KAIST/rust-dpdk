@@ -12,10 +12,15 @@ use regex::Regex;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::fs::*;
 use std::io::*;
 use std::path::*;
 use std::process::Command;
+use std::sync::Arc;
+use std::time::Instant;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 /// We make additional wrapper functions for existing bindings.
 /// To avoid collision, we add a magic prefix for each.
@@ -54,7 +59,7 @@ struct State {
     library_path: Option<PathBuf>,
 
     /// List of DPDK header files.
-    dpdk_headers: Vec<PathBuf>,
+    dpdk_headers: Vec<String>,
 
     /// List of DPDK lib files.
     dpdk_links: Vec<PathBuf>,
@@ -71,14 +76,8 @@ struct State {
     /// Names of `static inline` functions found in DPDK headers.
     static_functions: Vec<String>,
 
-    /// Names of linkable (non-static) PMD-specific functions. We use them to create explicit
-    /// symbolic dependencies to PMDs.
-    ///
-    /// Currently, DPDK's conditional build is incomplete. For example, declaration of
-    /// `rte_pmd_ixgbe_bypass_wd_reset` is controlled by `RTE_LIBRTE_IXGBE_BYPASS`, but its
-    /// definition is not.  Thus, we fallback to use explicit whitelist rather than automatically
-    /// detect non-static symbols.
-    linkable_pmd_functions: Vec<String>,
+    /// Macro constants are not expanded when it uses other macro functions.
+    static_constants: Vec<(String, String, u64)>,
 }
 
 impl State {
@@ -99,7 +98,7 @@ impl State {
             eal_function_use_defs: Default::default(),
             global_eal_function_use_defs: Default::default(),
             static_functions: Default::default(),
-            linkable_pmd_functions: Default::default(),
+            static_constants: Default::default(),
         }
     }
 
@@ -109,6 +108,7 @@ impl State {
         &self,
         index: &'a clang::Index,
         header_path: PathBuf,
+        do_macro: bool,
     ) -> clang::TranslationUnit<'a> {
         let mut argument = vec![
             "-march=native".into(),
@@ -131,6 +131,7 @@ impl State {
         }
         let trans_unit = index
             .parser(header_path)
+            .detailed_preprocessing_record(do_macro)
             .arguments(&argument)
             .parse()
             .unwrap();
@@ -185,7 +186,7 @@ impl State {
             self.include_path = Some(PathBuf::from("/usr/local/include"));
             self.library_path = Some(PathBuf::from(format!("/usr/local/lib/{}", machine_string)));
         } else {
-            panic!("DPDK is not installed on your system! (Cannot find /usr/local/include/dpdk/rte_config.h)")
+            panic!("DPDK is not installed on your system! (Cannot find /usr/local/include/rte_config.h)")
         }
         println!(
             "cargo:rerun-if-changed={}",
@@ -263,7 +264,6 @@ impl State {
         let include_dir = self.include_path.as_ref().unwrap();
         let dpdk_config = self.dpdk_config.as_ref().unwrap();
         // dlb drivers have duplicated enum definitions.
-        let blacklist = vec!["rte_pmd_dlb", "rte_pmd_dlb2", "rte_baseband_acc"];
         let mut headers = vec![];
         for entry in include_dir.read_dir().expect("read_dir failed") {
             if let Ok(entry) = entry {
@@ -273,7 +273,7 @@ impl State {
                     continue;
                 }
                 if let Some(stem) = path.file_stem() {
-                    if blacklist.contains(&stem.to_str().unwrap()) {
+                    if stem.to_str().unwrap().starts_with("rte_pmd_") {
                         continue;
                     }
                 }
@@ -302,7 +302,7 @@ impl State {
         ];
         // Remove blacklist headers
         let blacklist_prefix = vec!["rte_acc_"];
-        let mut name_set = vec![];
+        let mut name_set: Vec<String> = vec![];
         for file in &headers {
             let file_name = String::from(file.file_stem().unwrap().to_str().unwrap());
             name_set.push(file_name);
@@ -338,11 +338,19 @@ impl State {
                 Ordering::Greater => Ordering::Greater,
             }
         });
-        new_vec.dedup();
-        headers = new_vec;
+
+        let mut header_names: Vec<_> = new_vec
+            .into_iter()
+            .map(|header| header.file_name().unwrap().to_str().unwrap().to_string())
+            .filter(|x| x != "rte_config.h" || x != "rte_common.h")
+            .collect();
+        header_names.sort();
+        header_names.dedup();
+        header_names.insert(0, "rte_config.h".into());
+        header_names.insert(0, "rte_common.h".into());
 
         // Generate all-in-one dpdk header (`dpdk.h`).
-        self.dpdk_headers = headers;
+        self.dpdk_headers = header_names;
         let template_path = self.project_path.join("gen/dpdk.h.template");
         let target_path = self.out_path.join("dpdk.h");
         let mut template = File::open(template_path).unwrap();
@@ -351,10 +359,7 @@ impl State {
         template.read_to_string(&mut template_string).ok();
         let mut headers_string = String::new();
         for header in &self.dpdk_headers {
-            headers_string += &format!(
-                "#include \"{}\"\n",
-                header.file_name().unwrap().to_str().unwrap()
-            );
+            headers_string += &format!("#include \"{}\"\n", header);
         }
         let formatted_string = template_string.replace("%header_list%", &headers_string);
         target.write_fmt(format_args!("{}", formatted_string)).ok();
@@ -390,81 +395,16 @@ impl State {
         .iter()
         .map(|(c_type, rust_type)| (String::from(*c_type), String::from(*rust_type)))
         .collect();
-        let headers_whitelist = vec![
-            // From librte_eal/include/generic
-            "rte_atomic.h",
-            "rte_byteorder.h",
-            "rte_cpuflags.h",
-            "rte_cycles.h",
-            "rte_io.h",
-            "rte_mcslock.h",
-            "rte_memcpy.h",
-            "rte_pause.h",
-            "rte_prefetch.h",
-            "rte_rwlock.h",
-            "rte_spinlock.h",
-            "rte_ticketlock.h",
-            "rte_vect.h",
-            // From librte_eal/include
-            // "rte_alarm.h",
-            // "rte_bitmap.h",
-            // "rte_branch_prediction.h",
-            // "rte_bus.h",
-            // "rte_class.h",
-            "rte_common.h",
-            // "rte_compat.h",
-            // "rte_debug.h",
-            // "rte_dev.h",
-            // "rte_devargs.h",
-            // "rte_eal_interrupts.h",
-            // "rte_eal_memconfig.h",
-            // "rte_eal.h",
-            // "rte_errno.h",
-            // "rte_fbarray.h",
-            // "rte_function_versioning.h",
-            // "rte_hexdump.h",
-            // "rte_hypervisor.h",
-            // "rte_interrupts.h",
-            // "rte_keepalive.h",
-            // "rte_launch.h",
-            // "rte_lcore.h",
-            // "rte_log.h",
-            // "rte_malloc.h",
-            // "rte_memory.h",
-            // "rte_memzone.h",
-            // "rte_option.h",
-            // "rte_pci_dev_feature_defs.h",
-            // "rte_pci_dev_features.h",
-            // "rte_per_lcore.h",
-            "rte_random.h",
-            // "rte_reciprocal.h",
-            // "rte_service_component.h",
-            // "rte_service.h",
-            // "rte_string_fns.h",
-            // "rte_tailq.h",
-            // "rte_test.h",
-            // "rte_thread.h",
-            "rte_time.h",
-            "rte_uuid.h",
-            "rte_version.h",
-            // "rte_vfio.h",
-        ];
 
         // Set of function definition strings (Rust), coupled with function names.
         // This will prevent duplicated function definitions.
         let mut use_def_map = HashMap::new();
         let mut global_use_def_map = HashMap::new();
-
-        for header_name in &headers_whitelist {
-            let header_path = self.include_path.as_ref().unwrap().join(header_name);
-            if !header_path.exists() {
-                // In case where our whitelist is outdated.
-                println!("cargo:warning=EAL header whitelist is outdated. Contact maintainers.");
-                continue;
-            }
+        let target_path = self.out_path.join("dpdk.h");
+        {
             let clang = clang::Clang::new().unwrap();
             let index = clang::Index::new(&clang, true, true);
-            let trans_unit = self.trans_unit_from_header(&index, header_path);
+            let trans_unit = self.trans_unit_from_header(&index, target_path, false);
 
             // Iterate through each EAL header files and extract function definitions.
             'each_function: for f in trans_unit
@@ -476,8 +416,15 @@ impl State {
                 let name = some_or!(f.get_name(), continue);
                 let storage = some_or!(f.get_storage_class(), continue);
                 let return_type = some_or!(f.get_result_type(), continue);
-                let is_decl = f.is_definition();
-                let comment = strip_comments(some_or!(f.get_comment(), continue));
+                let is_decl = f.is_declaration();
+                let is_def = f.is_definition();
+                let is_inline_fn = f.is_inline_function();
+
+                let comment = f
+                    .get_comment()
+                    .map(strip_comments)
+                    .unwrap_or_else(|| "".to_string());
+
                 if use_def_map.contains_key(&name) {
                     // Skip duplicate
                     continue;
@@ -486,13 +433,13 @@ impl State {
                     // Skip hidden implementations
                     continue;
                 }
-                if !(storage == clang::StorageClass::None && !is_decl
-                    || is_decl && storage == clang::StorageClass::Static)
-                {
-                    // We only accept if a function definition is found, or a `static inline`
-                    // function declaration is found.
+                if clang::StorageClass::Static == storage && !(is_decl && is_inline_fn) {
                     continue;
                 }
+                if clang::StorageClass::None == storage && !is_def {
+                    continue;
+                }
+                // println!("cargo:warning={} {} {} {:?}", name, is_decl, f.is_inline_function(), storage);
 
                 // Extract type names in C and Rust.
                 let c_return_type_string = return_type.get_display_name();
@@ -555,7 +502,7 @@ impl State {
         let header_path = self.out_path.join("dpdk.h");
         let clang = clang::Clang::new().unwrap();
         let index = clang::Index::new(&clang, true, true);
-        let trans_unit = self.trans_unit_from_header(&index, header_path);
+        let trans_unit = self.trans_unit_from_header(&index, header_path.clone(), false);
 
         // List of `static inline` functions (definitions).
         let mut static_def_list = vec![];
@@ -595,13 +542,18 @@ impl State {
             let name = some_or!(f.get_name(), continue);
             let storage = some_or!(f.get_storage_class(), continue);
             let return_type = some_or!(f.get_result_type(), continue);
-            let is_decl = f.is_definition();
+            let is_inline = f.is_inline_function();
+            let is_decl = f.is_declaration();
 
-            if storage == clang::StorageClass::None && !is_decl && name.starts_with("rte_pmd_") {
-                // non-static function definition for a PMD is found.
-                self.linkable_pmd_functions.push(name);
-            } else if storage == clang::StorageClass::Static && is_decl && !name.starts_with('_') {
+            if storage == clang::StorageClass::Static
+                && is_decl
+                && is_inline
+                && !name.starts_with('_')
+            {
                 // Declaration of static function is found (skip if function name starts with _).
+                if self.static_functions.contains(&name) {
+                    continue;
+                }
                 let mut arg_strings = Vec::new();
                 let mut param_strings = Vec::new();
                 let return_type_string = return_type.get_display_name();
@@ -633,9 +585,158 @@ impl State {
             }
         }
 
-        let header_path = self.out_path.join("static.h");
+        let trans_unit = self.trans_unit_from_header(&index, header_path, true);
+        let mut macro_candidates = Vec::new();
+
+        let macro_const_fmt = Regex::new(r"[A-Z][A-Z0-9]*(\_[A-Z][A-Z0-9]*)*").unwrap();
+        for f in trans_unit
+            .get_entity()
+            .get_children()
+            .into_iter()
+            .filter(|e| e.get_kind() == clang::EntityKind::MacroDefinition)
+        {
+            let name = some_or!(f.get_name(), continue);
+            if f.is_builtin_macro() {
+                continue;
+            }
+            if f.is_function_like_macro() {
+                continue;
+            }
+            if !macro_const_fmt.is_match(name.as_str()) {
+                continue;
+            }
+            macro_candidates.push(name.trim().to_string());
+        }
+        macro_candidates.sort();
+        macro_candidates.dedup();
+        // macro_candidates.drain(100..);
+
+        let test_template = self.project_path.join("gen/int_test.c");
+        let builder = cc::Build::new();
+        let compiler = builder.get_compiler();
+        let cc_name = compiler.path().to_str().unwrap().to_string();
+
+        let dpdk_include_path = self.include_path.as_ref().unwrap();
+        let dpdk_config_path = self.dpdk_config.as_ref().unwrap();
+
+        let cpus = num_cpus::get();
+
+        let workqueue = Arc::new(crossbeam_queue::SegQueue::<String>::new());
+        for name in macro_candidates {
+            workqueue.push(name);
+        }
+        let dpdk_include = dpdk_include_path.to_str().unwrap();
+        let output_include = self.out_path.to_str().unwrap();
+
+        let compile_start_at = Instant::now();
+        let mut wait_list = Vec::new();
+        let start_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        for _idx in 0..cpus {
+            let test_template = test_template.clone();
+
+            let queue = workqueue.clone();
+            let cc_name = cc_name.clone();
+            let dpdk_include = dpdk_include.to_string();
+            let output_include = output_include.to_string();
+            let dpdk_config_path = dpdk_config_path.clone();
+            let out_path = self.out_path.clone();
+            let task = move || {
+                let mut results = Vec::new();
+                while let Some(name) = queue.pop() {
+                    let target_bin_path =
+                        out_path.join(format!("int_test_{}_{}", start_time, name));
+
+                    let mut return_value = None;
+                    let try_args = vec![
+                        ("U64_FMT", "u64"),
+                        ("ULL_FMT", "u64"), // ("ULL_FMT", "u128")
+                        ("U32_FMT", "u32"),
+                    ];
+                    for (fmt_name, type_name) in try_args {
+                        if target_bin_path.exists() {
+                            fs::remove_file(target_bin_path.clone()).unwrap();
+                        }
+                        let ret = Command::new(cc_name.clone())
+                            .arg("-Wall")
+                            .arg("-Wextra")
+                            .arg("-Werror")
+                            .arg("-std=c99")
+                            .arg(format!("-I{}", dpdk_include))
+                            .arg(format!("-I{}", output_include))
+                            .arg("-imacros")
+                            .arg(dpdk_config_path.to_str().unwrap())
+                            .arg("-march=native")
+                            .arg(format!("-D__CHECK_FMT={}", fmt_name))
+                            .arg(format!("-D__CHECK_VAL={}", name))
+                            .arg("-o")
+                            .arg(target_bin_path.clone())
+                            .arg(test_template.clone())
+                            .arg("-lrte_eal")
+                            .output();
+                        if let Ok(ret) = ret {
+                            if ret.status.success() {
+                                let ret = Command::new(target_bin_path.clone()).output().unwrap();
+                                let str = String::from_utf8(ret.stdout).unwrap();
+                                let val: u64 = str.trim().parse().unwrap(); // See ULL_FMT to use which integer. u64 or u128.
+                                return_value = Some((
+                                    name.clone().to_ascii_uppercase(),
+                                    type_name.into(),
+                                    val,
+                                ));
+                            }
+                        }
+                        if return_value.is_some() {
+                            break;
+                        }
+                    }
+
+                    // println!("cargo:warning=compile thread task done {}, {:?}", idx, return_value);
+                    results.push(return_value);
+                    if target_bin_path.exists() {
+                        fs::remove_file(target_bin_path.clone()).unwrap();
+                    }
+                }
+                // println!("cargo:warning=compile thread terminated {}", idx);
+                results
+            };
+            let handle = std::thread::spawn(task);
+            wait_list.push(handle);
+            //pool.execute(task);
+            // task();
+        }
+        let mut all_results = Vec::new();
+        for handle in wait_list {
+            let results = handle.join().unwrap();
+            all_results.extend(results);
+        }
+
+        let mut some_count = 0;
+        let mut none_count = 0;
+        for val in all_results {
+            if let Some((name, int_type, val)) = val {
+                // println!("cargo:warning=macro {}: {} = {}", name, int_type, val);
+                self.static_constants.push((name, int_type, val));
+                some_count += 1;
+            } else {
+                none_count += 1;
+            }
+        }
+        let compile_end_at = Instant::now();
+        println!(
+            "cargo:warning=compile time: {:02}s, {}/{} macros processed",
+            (compile_end_at - compile_start_at).as_secs_f64(),
+            some_count,
+            some_count + none_count,
+        );
+
+        // gcc -S test.c -Wall -Wextra -std=c99 -Werror
+
+        let header_path: PathBuf = self.out_path.join("static.h");
         let header_template = self.project_path.join("gen/static.h.template");
-        let source_path = self.out_path.join("static.c");
+        let source_path: PathBuf = self.out_path.join("static.c");
         let source_template = self.project_path.join("gen/static.c.template");
 
         let header_defs = static_def_list
@@ -644,77 +745,6 @@ impl State {
             .join("\n");
         let static_impls = Iterator::zip(static_def_list.iter(), static_impl_list.iter())
             .map(|(def_, decl_)| format!("{}{}", def_, decl_))
-            .join("\n");
-
-        // List of manually enabled DPDK PMDs
-        let mut linkable_whitelist: Vec<_> = vec![
-            "rte_pmd_ixgbe_set_all_queues_drop_en", // ixgbe
-            "rte_pmd_i40e_ping_vfs",                // i40e
-            "e1000_igb_init_log",                   // e1000
-            "ice_release_vsi",                      // ice
-            "vmxnet3_dev_tx_queue_release",         // vmxnet3
-            "virtio_dev_pause",                     // virtio
-            "softnic_thread_free",                  // softnic
-            // "ipn3ke_hw_tm_init", // ipn3ke (currently not enabled)
-            // "mlx4_fd_set_non_blocking", // mlx4 (currently not enabled)
-            // "mlx5_set_cksum_table", // mlx5 (currently not enabled)
-            "iavf_prep_pkts",                    // iavf
-            "fm10k_get_pcie_msix_count_generic", // fm10k
-        ]
-        .iter()
-        .map(|name| (*name).to_string())
-        .collect();
-
-        // List of non-static PMD-specific functions used to create symbolic dependencies to PMDs.
-        let mut linkable_extern_def_list: Vec<_> = vec![
-            "void e1000_igb_init_log(void)",                           // e1000
-            "int ice_release_vsi(struct ice_vsi *vsi)",                // ice
-            "void vmxnet3_dev_tx_queue_release(void *txq)",            // vmxnet3
-            "int virtio_dev_pause(struct rte_eth_dev *dev)",           // virtio
-            "void softnic_thread_free(struct pmd_internals *softnic)", // softnic
-            // "int ipn3ke_hw_tm_init(struct ipn3ke_hw *hw)", // ipn3ke (currently not enabled)
-            // "int mlx4_fd_set_non_blocking(int fd)", // mlx4 (currently not enabled)
-            // "void mlx5_set_cksum_table(void)", // mlx5 (currently not enabled)
-            "uint16_t iavf_prep_pkts(void *tx_queue, struct rte_mbuf **tx_pkts, uint16_t nb_pkts)", // iavf
-            "uint16_t fm10k_get_pcie_msix_count_generic(struct fm10k_hw *hw)", // fm10k
-        ]
-        .iter()
-        .map(|name| (*name).to_string())
-        .collect();
-
-        // If non-default net drivers are enabled (ex. MLX5), add their PMD to the list.
-        for link in &self.dpdk_links {
-            let libname = link.file_name().unwrap().to_str().unwrap();
-
-            if libname == "librte_pmd_mlx5.a" {
-                linkable_whitelist.push("mlx5_set_cksum_table".to_string());
-                linkable_extern_def_list.push("void mlx5_set_cksum_table(void)".to_string());
-                break;
-            }
-        }
-
-        // Currently, we use whitelist instead of extracted function list from DPDK library.  See
-        // `linkable_pmd_functions` field of `State` for more information.
-        self.linkable_pmd_functions = linkable_whitelist;
-
-        // Create `extern` definition for each symbol.
-        let linkable_extern_defs = linkable_extern_def_list
-            .iter()
-            .map(|name| format!("extern {name};", name = name))
-            .join("\n");
-
-        // Create explicit symbolic links to PMDs from `rust-dpdk-sys` rust library.  We will
-        // normalize each function symbol to return its address.
-        let perlist_links = self
-            .linkable_pmd_functions
-            .iter()
-            .map(|name| {
-                format!(
-                    "void* {prefix}{name}() {{\n\treturn {name};\n}}",
-                    prefix = PREFIX,
-                    name = name
-                )
-            })
             .join("\n");
 
         // Generate header file from template
@@ -730,9 +760,6 @@ impl State {
         let mut template_string = String::new();
         template.read_to_string(&mut template_string).ok();
         let formatted_string = template_string.replace("%static_impls%", &static_impls);
-        let formatted_string =
-            formatted_string.replace("%linkable_extern_defs%", &linkable_extern_defs);
-        let formatted_string = formatted_string.replace("%explicit_pmd_links%", &perlist_links);
         let mut target = File::create(source_path).unwrap();
         target.write_fmt(format_args!("{}", &formatted_string)).ok();
     }
@@ -752,7 +779,6 @@ impl State {
             .clang_arg(dpdk_config_path.to_str().unwrap())
             .clang_arg("-march=native")
             .clang_arg("-Wno-everything")
-            .rustfmt_bindings(true)
             .opaque_type("vmbus_bufring")
             .opaque_type("rte_avp_desc")
             .opaque_type("rte_.*_hdr")
@@ -780,32 +806,23 @@ impl State {
             })
             .join("\n");
 
-        let explicit_use_string = self
-            .linkable_pmd_functions
-            .iter()
-            .map(|name| {
-                format!(
-                    "\tpub fn {prefix}{name}() -> *mut ::std::os::raw::c_void;",
-                    prefix = PREFIX,
-                    name = name
-                )
-            })
-            .join("\n");
-        let explicit_invoke_string = self
-            .linkable_pmd_functions
-            .iter()
-            .map(|name| format!("\t\t{prefix}{name}();", prefix = PREFIX, name = name))
-            .join("\n");
-
         let mut template = File::open(template_path).unwrap();
         let mut template_string = String::new();
         template.read_to_string(&mut template_string).ok();
 
         let formatted_string = template_string.replace("%static_use_defs%", &static_use_string);
-        let formatted_string =
-            formatted_string.replace("%explicit_use_defs%", &explicit_use_string);
-        let formatted_string =
-            formatted_string.replace("%explicit_invokes%", &explicit_invoke_string);
+
+        let formatted_string = formatted_string.replace(
+            "%static_constants%",
+            &self
+                .static_constants
+                .iter()
+                .map(|(name, int_type, val): &(String, String, u64)| {
+                    format!("pub const {}: {} = {};", name, int_type, val)
+                })
+                .join("\n"),
+        );
+
         let formatted_string = formatted_string.replace(
             "%static_eal_functions%",
             &self
@@ -846,8 +863,8 @@ impl State {
             .flag("-march=native")
             .flag("-imacros")
             .flag(dpdk_config.to_str().unwrap())
-            .flag(&format!("-L{}", lib_path.to_str().unwrap()))
-            .flag("-ldpdk")
+            // .flag(&format!("-L{}", lib_path.to_str().unwrap()))
+            // .flag("-ldpdk")
             .compile("lib_static_wrapper.a");
 
         println!(
@@ -855,22 +872,84 @@ impl State {
             lib_path.to_str().unwrap()
         );
 
+        let pmd_whitelist = vec![
+            ("rte_net_af_packet", vec![]),
+            ("rte_net_af_xdp", vec!["xdp", "bpf"]),
+            ("rte_net_ark", vec![]),
+            ("rte_net_avp", vec![]),
+            ("rte_net_axgbe", vec![]),
+            ("rte_net_bnx2x", vec!["z"]),
+            ("rte_net_bnxt", vec![]),
+            ("rte_net_bonding", vec![]),
+            ("rte_net_cxgbe", vec![]),
+            ("rte_net_e1000", vec![]),
+            ("rte_net_ena", vec![]),
+            ("rte_net_enetfec", vec![]),
+            ("rte_net_enic", vec![]),
+            ("rte_net_failsafe", vec![]),
+            ("rte_net_fm10k", vec![]),
+            ("rte_net_gve", vec![]),
+            ("rte_net_hinic", vec![]),
+            ("rte_net_hns3", vec![]),
+            ("rte_net_i40e", vec![]),
+            ("rte_net_ionic", vec![]),
+            ("rte_net_ixgbe", vec![]),
+            // ("rte_net_kni", vec![]), // Kni causes crash (Cannot init trace).
+            ("rte_net_liquidio", vec![]),
+            ("rte_net_memif", vec![]),
+            ("rte_net_mlx4", vec!["mlx4", "ibverbs"]),
+            ("rte_net_mlx5", vec!["mlx5", "ibverbs"]),
+            ("rte_net_mvneta", vec!["musdk"]),
+            ("rte_net_mvpp2", vec!["musdk"]),
+            ("rte_net_netvsc", vec![]),
+            ("rte_net_nfp", vec![]),
+            ("rte_net_ngbe", vec![]),
+            ("rte_net_null", vec![]),
+            ("rte_net_pcap", vec!["pcap"]),
+            ("rte_net_octeon_ep", vec![]),
+            ("rte_net_octeontx", vec![]),
+            ("rte_net_ring", vec![]),
+            ("rte_net_sfc", vec!["atomic"]),
+            ("rte_net_softnic", vec![]),
+            ("rte_net_tap", vec![]),
+            ("rte_net_thunderx", vec![]),
+            ("rte_net_txgbe", vec![]),
+            ("rte_net_vhost", vec![]),
+            ("rte_net_virtio", vec![]),
+            ("rte_net_vmxnet3", vec![]),
+        ];
+        let mut additional_libs: Vec<&'static str> = vec![];
+
         // Legacy mode: Rust cargo cannot recognize library groups (libdpdk.a).
-        let format = Regex::new(r"lib(.*)\.(a)").unwrap();
-        for link in &self.dpdk_links {
+        let lib_name_format = Regex::new(r"lib(.*)\.(a)").unwrap();
+        'outer: for link in &self.dpdk_links {
             let lib_name = link.file_name().unwrap().to_str().unwrap();
 
-            if let Some(capture) = format.captures(lib_name) {
+            if let Some(capture) = lib_name_format.captures(lib_name) {
                 let link_name = &capture[1];
                 if link_name == "dpdk" {
                     continue;
-                } else if link_name == "rte_pmd_mlx5" {
-                    // MLX5 PMD requires additional liniking of two libraries
-                    println!("cargo:rustc-link-lib=ibverbs");
-                    println!("cargo:rustc-link-lib=mlx5");
                 }
-                println!("cargo:rustc-link-lib=static={}", link_name);
+                for (name, deps) in pmd_whitelist.iter() {
+                    if *name == link_name {
+                        additional_libs.extend(deps.iter());
+                        println!(
+                            "cargo:rustc-link-lib=static:+whole-archive,-bundle={}",
+                            link_name
+                        );
+                        continue 'outer;
+                    }
+                }
+                if link_name.starts_with("rte_net_") {
+                    continue;
+                }
+                println!("cargo:rustc-link-lib={}", link_name);
             }
+        }
+        additional_libs.sort();
+        additional_libs.dedup();
+        for dep in additional_libs {
+            println!("cargo:rustc-link-lib={}", dep);
         }
         println!("cargo:rustc-link-lib=numa");
     }
