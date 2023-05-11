@@ -1,7 +1,8 @@
 pipeline {
     agent { dockerfile true }
     environment {
-        CARGO = "cargo --locked"
+        CARGO="$HOME/.cargo/bin/cargo --locked"
+        RUSTC="$HOME/.cargo/bin/rustc"
     }
     stages {
         stage ("Version") {
