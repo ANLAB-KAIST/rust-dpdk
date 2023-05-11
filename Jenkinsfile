@@ -1,15 +1,19 @@
 pipeline {
     agent { dockerfile true }
     environment {
-        CARGO = "cargo --locked"
+        CARGO="$HOME/.cargo/bin/cargo --locked"
+        RUSTC="$HOME/.cargo/bin/rustc"
     }
     stages {
         stage ("Version") {
             steps {
                 sh "$CARGO --version"
-                sh "rustc --version"
-                sh "rustup component add rustfmt"
-                sh "rustup component add clippy"
+                sh "$RUSTC --version"
+            }
+        }
+        stage ("Build") {
+            steps {
+                sh "$CARGO build"
             }
         }
         stage ("Check") {
@@ -17,11 +21,6 @@ pipeline {
                 sh "$CARGO check"
                 sh "$CARGO fmt --all -- --check"
                 sh "$CARGO clippy -- -D warnings"
-            }
-        }
-        stage ("Build") {
-            steps {
-                sh "$CARGO build"
             }
         }
         stage ("Test (common)") {
