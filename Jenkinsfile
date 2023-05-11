@@ -8,9 +8,7 @@ pipeline {
         stage ("Version") {
             steps {
                 sh "$CARGO --version"
-                sh "rustc --version"
-                sh "rustup component add rustfmt"
-                sh "rustup component add clippy"
+                sh "$RUSTC --version"
             }
         }
         stage ("Check") {
