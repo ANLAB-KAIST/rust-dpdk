@@ -11,16 +11,16 @@ pipeline {
                 sh "$RUSTC --version"
             }
         }
+        stage ("Build") {
+            steps {
+                sh "$CARGO build"
+            }
+        }
         stage ("Check") {
             steps {
                 sh "$CARGO check"
                 sh "$CARGO fmt --all -- --check"
                 sh "$CARGO clippy -- -D warnings"
-            }
-        }
-        stage ("Build") {
-            steps {
-                sh "$CARGO build"
             }
         }
         stage ("Test (common)") {
