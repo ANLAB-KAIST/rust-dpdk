@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "rust-dpdk-sys"
+name = "rust-dpdk-anlab"
 version = "0.1.22110"
 authors = ["Keunhong Lee <dlrmsghd@gmail.com>", "Jeehoon Kang <jeehoon.kang@kaist.ac.kr>", "ANLAB <support@an.kaist.ac.kr>"]
 
