@@ -28,7 +28,6 @@ crossbeam-queue = "0.3"
 default = []
 
 [lib]
-name = "dpdk_sys"
 
 [[bin]]
 name = "dpdk_sys_test"
