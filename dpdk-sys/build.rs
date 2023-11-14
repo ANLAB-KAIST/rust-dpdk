@@ -961,34 +961,32 @@ impl State {
             ("rte_net_vmxnet3", vec![]),
         ];
         let mut pmd_whitelist = Vec::new();
-        
+
         let test_template = self.project_path.join("gen/link_test.c");
         let builder = cc::Build::new();
         let compiler = builder.get_compiler();
         let cc_name = compiler.path().to_str().unwrap().to_string();
-        
-        let out_path = self.out_path.clone();
-        let target_bin_path =
-            out_path.join(format!("link_test", start_time, name));
-        let task = move || {
-            let mut results = Vec::new();
-            while let Some(name) = queue.pop() {
-                
-        for (name, deps) in pmd_whitelist.into_iter() {
-            let mut skip = false;
-            for dep in deps {
+
+        for (name, deps) in pmd_whitelist_candidate.into_iter() {
+            let mut skip_due_to = Vec::new();
+            for dep in &deps {
                 let ret = Command::new(cc_name.clone())
-                        .arg("-o")
-                        .arg("/dev/null")
-                        .arg(test_template.clone())
-                        .arg(format!("-l{dep}", dep))
-                        .output();
-                if ret.is_err() {
-                    println!("cargo:warning=Skip {} for missing lib {}", name, dep);
-                    skip = true;
+                    .arg("-o")
+                    .arg("/dev/null")
+                    .arg(test_template.clone())
+                    .arg(format!("-l{}", dep))
+                    .output();
+                if let Ok(ret) = ret {
+                    if !ret.status.success() {
+                        skip_due_to.push(dep.clone());
+                    }
                 }
             }
-            if skip {
+            if !skip_due_to.is_empty() {
+                println!(
+                    "cargo:warning=Skip linking {} for missing deps {:?}",
+                    name, skip_due_to
+                );
                 continue;
             }
             pmd_whitelist.push((name, deps));
