@@ -914,7 +914,7 @@ impl State {
             lib_path.to_str().unwrap()
         );
 
-        let pmd_whitelist = vec![
+        let pmd_whitelist_candidate = vec![
             ("rte_net_af_packet", vec![]),
             ("rte_net_af_xdp", vec!["xdp", "bpf"]),
             ("rte_net_ark", vec![]),
@@ -960,6 +960,39 @@ impl State {
             ("rte_net_virtio", vec![]),
             ("rte_net_vmxnet3", vec![]),
         ];
+        let mut pmd_whitelist = Vec::new();
+        
+        let test_template = self.project_path.join("gen/link_test.c");
+        let builder = cc::Build::new();
+        let compiler = builder.get_compiler();
+        let cc_name = compiler.path().to_str().unwrap().to_string();
+        
+        let out_path = self.out_path.clone();
+        let target_bin_path =
+            out_path.join(format!("link_test", start_time, name));
+        let task = move || {
+            let mut results = Vec::new();
+            while let Some(name) = queue.pop() {
+                
+        for (name, deps) in pmd_whitelist.into_iter() {
+            let mut skip = false;
+            for dep in deps {
+                let ret = Command::new(cc_name.clone())
+                        .arg("-o")
+                        .arg("/dev/null")
+                        .arg(test_template.clone())
+                        .arg(format!("-l{dep}", dep))
+                        .output();
+                if ret.is_err() {
+                    println!("cargo:warning=Skip {} for missing lib {}", name, dep);
+                    skip = true;
+                }
+            }
+            if skip {
+                continue;
+            }
+            pmd_whitelist.push((name, deps));
+        }
         let mut rte_libs: Vec<_> = Vec::new();
         let mut additional_libs: Vec<&'static str> = vec![];
 
