@@ -25,7 +25,8 @@ itertools = "0.10"
 crossbeam-queue = "0.3"
 
 [features]
-default = []
+default = ["constants_cache"]
+constants_cache = []
 
 [lib]
 name = "dpdk_sys"

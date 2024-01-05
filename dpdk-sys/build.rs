@@ -77,7 +77,7 @@ struct State {
     static_functions: Vec<String>,
 
     /// Macro constants are not expanded when it uses other macro functions.
-    static_constants: Vec<(String, String, u64)>,
+    static_constants: String,
 }
 
 impl State {
@@ -588,191 +588,215 @@ impl State {
             }
         }
 
-        let trans_unit = self.trans_unit_from_header(&index, header_path, true);
-        let mut macro_candidates = Vec::new();
-
-        let macro_const_fmt = Regex::new(r"[A-Z][A-Z0-9]*(_[A-Z][A-Z0-9]*)*").unwrap();
-        for f in trans_unit
-            .get_entity()
-            .get_children()
-            .into_iter()
-            .filter(|e| e.get_kind() == clang::EntityKind::MacroDefinition)
-        {
-            let name = some_or!(f.get_name(), continue);
-            if f.is_builtin_macro() {
-                continue;
-            }
-            if f.is_function_like_macro() {
-                continue;
-            }
-            if !macro_const_fmt.is_match(name.as_str()) {
-                continue;
-            }
-            macro_candidates.push(name.trim().to_string());
+        if env::var("CARGO_FEATURE_CONSTANTS_CACHE").is_ok() {
+            println!("cargo:warning=Using cached constants data");
+            let cache_path = self.project_path.join("gen/constants.rs.cache");
+            let mut cache_file = File::open(cache_path).unwrap();
+            let mut cache_string = String::new();
+            cache_file.read_to_string(&mut cache_string).ok();
+            self.static_constants = cache_string;
         }
-        macro_candidates.sort();
-        macro_candidates.dedup();
-        // macro_candidates.drain(100..);
+        // Check macro
+        else {
+            let mut static_constants_vec: Vec<(String, String, u64)> = Vec::new();
+            let trans_unit = self.trans_unit_from_header(&index, header_path, true);
+            let mut macro_candidates = Vec::new();
 
-        let test_template = self.project_path.join("gen/int_test.c");
-        let builder = cc::Build::new();
-        let compiler = builder.get_compiler();
-        let cc_name = compiler.path().to_str().unwrap().to_string();
+            let macro_const_fmt = Regex::new(r"[A-Z][A-Z0-9]*(_[A-Z][A-Z0-9]*)*").unwrap();
+            for f in trans_unit
+                .get_entity()
+                .get_children()
+                .into_iter()
+                .filter(|e| e.get_kind() == clang::EntityKind::MacroDefinition)
+            {
+                let name = some_or!(f.get_name(), continue);
+                if f.is_builtin_macro() {
+                    continue;
+                }
+                if f.is_function_like_macro() {
+                    continue;
+                }
+                if !macro_const_fmt.is_match(name.as_str()) {
+                    continue;
+                }
+                macro_candidates.push(name.trim().to_string());
+            }
+            macro_candidates.sort();
+            macro_candidates.dedup();
+            // macro_candidates.drain(100..);
 
-        let dpdk_include_path = self.include_path.as_ref().unwrap();
-        let dpdk_config_path = self.dpdk_config.as_ref().unwrap();
+            let test_template = self.project_path.join("gen/int_test.c");
+            let builder = cc::Build::new();
+            let compiler = builder.get_compiler();
+            let cc_name = compiler.path().to_str().unwrap().to_string();
 
-        let cpus = num_cpus::get();
+            let dpdk_include_path = self.include_path.as_ref().unwrap();
+            let dpdk_config_path = self.dpdk_config.as_ref().unwrap();
 
-        let workqueue = Arc::new(crossbeam_queue::SegQueue::<String>::new());
-        for name in macro_candidates {
-            workqueue.push(name);
-        }
-        let dpdk_include = dpdk_include_path.to_str().unwrap();
-        let output_include = self.out_path.to_str().unwrap();
+            let cpus = num_cpus::get();
 
-        let compile_start_at = Instant::now();
-        let mut wait_list = Vec::new();
-        let start_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        for _idx in 0..cpus {
-            let test_template = test_template.clone();
+            let workqueue = Arc::new(crossbeam_queue::SegQueue::<String>::new());
+            for name in macro_candidates {
+                workqueue.push(name);
+            }
+            let dpdk_include = dpdk_include_path.to_str().unwrap();
+            let output_include = self.out_path.to_str().unwrap();
 
-            let queue = workqueue.clone();
-            let cc_name = cc_name.clone();
-            let dpdk_include = dpdk_include.to_string();
-            let output_include = output_include.to_string();
-            let dpdk_config_path = dpdk_config_path.clone();
-            let out_path = self.out_path.clone();
-            let task = move || {
-                let mut results = Vec::new();
-                while let Some(name) = queue.pop() {
-                    let target_bin_path =
-                        out_path.join(format!("int_test_{}_{}", start_time, name));
+            let compile_start_at = Instant::now();
+            let mut wait_list = Vec::new();
+            let start_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+            for _idx in 0..cpus {
+                let test_template = test_template.clone();
 
-                    let mut return_value = None;
-                    let try_args = vec![
-                        ("U64_FMT", "u64"),
-                        ("ULL_FMT", "u64"), // ("ULL_FMT", "u128")
-                        ("U32_FMT", "u32"),
-                    ];
-                    for (fmt_name, type_name) in try_args {
+                let queue = workqueue.clone();
+                let cc_name = cc_name.clone();
+                let dpdk_include = dpdk_include.to_string();
+                let output_include = output_include.to_string();
+                let dpdk_config_path = dpdk_config_path.clone();
+                let out_path = self.out_path.clone();
+                let task = move || {
+                    let mut results = Vec::new();
+                    while let Some(name) = queue.pop() {
+                        let target_bin_path =
+                            out_path.join(format!("int_test_{}_{}", start_time, name));
+
+                        let mut return_value = None;
+                        let try_args = vec![
+                            ("U64_FMT", "u64"),
+                            ("ULL_FMT", "u64"), // ("ULL_FMT", "u128")
+                            ("U32_FMT", "u32"),
+                        ];
+                        for (fmt_name, type_name) in try_args {
+                            if target_bin_path.exists() {
+                                fs::remove_file(target_bin_path.clone()).unwrap();
+                            }
+                            let ret = Command::new(cc_name.clone())
+                                .arg("-Wall")
+                                .arg("-Wextra")
+                                .arg("-Werror")
+                                .arg("-std=c99")
+                                .arg(format!("-I{}", dpdk_include))
+                                .arg(format!("-I{}", output_include))
+                                .arg("-imacros")
+                                .arg(dpdk_config_path.to_str().unwrap())
+                                .arg("-march=native")
+                                .arg(format!("-D__CHECK_FMT={}", fmt_name))
+                                .arg(format!("-D__CHECK_VAL={}", name))
+                                .arg("-o")
+                                .arg(target_bin_path.clone())
+                                .arg(test_template.clone())
+                                .arg("-lrte_eal")
+                                .output();
+                            if let Ok(ret) = ret {
+                                if ret.status.success() {
+                                    let ret =
+                                        Command::new(target_bin_path.clone()).output().unwrap();
+                                    let str = String::from_utf8(ret.stdout).unwrap();
+                                    let val: u64 = str.trim().parse().unwrap(); // See ULL_FMT to use which integer. u64 or u128.
+                                    return_value = Some((
+                                        name.clone().to_ascii_uppercase(),
+                                        type_name.into(),
+                                        val,
+                                    ));
+                                }
+                            }
+                            if return_value.is_some() {
+                                break;
+                            }
+                        }
+
+                        // println!("cargo:warning=compile thread task done {}, {:?}", idx, return_value);
+                        results.push(return_value);
                         if target_bin_path.exists() {
                             fs::remove_file(target_bin_path.clone()).unwrap();
                         }
-                        let ret = Command::new(cc_name.clone())
-                            .arg("-Wall")
-                            .arg("-Wextra")
-                            .arg("-Werror")
-                            .arg("-std=c99")
-                            .arg(format!("-I{}", dpdk_include))
-                            .arg(format!("-I{}", output_include))
-                            .arg("-imacros")
-                            .arg(dpdk_config_path.to_str().unwrap())
-                            .arg("-march=native")
-                            .arg(format!("-D__CHECK_FMT={}", fmt_name))
-                            .arg(format!("-D__CHECK_VAL={}", name))
-                            .arg("-o")
-                            .arg(target_bin_path.clone())
-                            .arg(test_template.clone())
-                            .arg("-lrte_eal")
-                            .output();
-                        if let Ok(ret) = ret {
-                            if ret.status.success() {
-                                let ret = Command::new(target_bin_path.clone()).output().unwrap();
-                                let str = String::from_utf8(ret.stdout).unwrap();
-                                let val: u64 = str.trim().parse().unwrap(); // See ULL_FMT to use which integer. u64 or u128.
-                                return_value = Some((
-                                    name.clone().to_ascii_uppercase(),
-                                    type_name.into(),
-                                    val,
-                                ));
-                            }
-                        }
-                        if return_value.is_some() {
-                            break;
-                        }
                     }
+                    // println!("cargo:warning=compile thread terminated {}", idx);
+                    results
+                };
+                let handle = std::thread::spawn(task);
+                wait_list.push(handle);
+                //pool.execute(task);
+                // task();
+            }
+            let mut all_results = Vec::new();
+            for handle in wait_list {
+                let results = handle.join().unwrap();
+                all_results.extend(results);
+            }
 
-                    // println!("cargo:warning=compile thread task done {}, {:?}", idx, return_value);
-                    results.push(return_value);
-                    if target_bin_path.exists() {
-                        fs::remove_file(target_bin_path.clone()).unwrap();
+            let mut some_count = 0;
+            let mut none_count = 0;
+            for val in all_results {
+                if let Some((name, int_type, val)) = val {
+                    // println!("cargo:warning=macro {}: {} = {}", name, int_type, val);
+                    static_constants_vec.push((name, int_type, val));
+                    some_count += 1;
+                } else {
+                    none_count += 1;
+                }
+            }
+            let compile_end_at = Instant::now();
+            println!(
+                "cargo:warning=compile time: {:02}s, {}/{} macros processed",
+                (compile_end_at - compile_start_at).as_secs_f64(),
+                some_count,
+                some_count + none_count,
+            );
+
+            let mut zero_prefix_list = Vec::new();
+            for (name, int_type, val) in static_constants_vec.iter() {
+                if *val == 0 && int_type == "u32" {
+                    let segs = name.split('_').collect::<Vec<_>>();
+                    if segs.len() <= 3 {
+                        // 이름이 너무 짧은 경우
+                        continue;
+                    }
+                    let prefix = segs[..segs.len() - 1].join("_") + "_";
+                    zero_prefix_list.push((name.clone(), prefix));
+                }
+            }
+            zero_prefix_list.sort();
+            zero_prefix_list.dedup();
+            let mut change_list = Vec::new();
+            for (other_name, other_int_type, _) in static_constants_vec.iter() {
+                for (name, prefix) in zero_prefix_list.iter() {
+                    if *other_name != *name
+                        && other_name.starts_with(prefix)
+                        && *other_int_type == "u64"
+                    {
+                        change_list.push((name.clone(), other_int_type.clone()));
+                        break;
                     }
                 }
-                // println!("cargo:warning=compile thread terminated {}", idx);
-                results
-            };
-            let handle = std::thread::spawn(task);
-            wait_list.push(handle);
-            //pool.execute(task);
-            // task();
-        }
-        let mut all_results = Vec::new();
-        for handle in wait_list {
-            let results = handle.join().unwrap();
-            all_results.extend(results);
-        }
+            }
+            change_list.sort();
+            change_list.dedup();
+            for (name, int_type, val) in static_constants_vec.iter_mut() {
+                for (change_name, change_int_type) in change_list.iter() {
+                    if *name == *change_name {
+                        println!(
+                            "cargo:warning=macro {}:{}, {} -> {}",
+                            name, val, int_type, change_int_type
+                        );
+                        *int_type = change_int_type.clone();
+                    }
+                }
+            }
 
-        let mut some_count = 0;
-        let mut none_count = 0;
-        for val in all_results {
-            if let Some((name, int_type, val)) = val {
-                // println!("cargo:warning=macro {}: {} = {}", name, int_type, val);
-                self.static_constants.push((name, int_type, val));
-                some_count += 1;
-            } else {
-                none_count += 1;
-            }
-        }
-        let compile_end_at = Instant::now();
-        println!(
-            "cargo:warning=compile time: {:02}s, {}/{} macros processed",
-            (compile_end_at - compile_start_at).as_secs_f64(),
-            some_count,
-            some_count + none_count,
-        );
-
-        let mut zero_prefix_list = Vec::new();
-        for (name, int_type, val) in self.static_constants.iter() {
-            if *val == 0 && int_type == "u32" {
-                let segs = name.split('_').collect::<Vec<_>>();
-                if segs.len() <= 3 {
-                    // 이름이 너무 짧은 경우
-                    continue;
-                }
-                let prefix = segs[..segs.len() - 1].join("_") + "_";
-                zero_prefix_list.push((name.clone(), prefix));
-            }
-        }
-        zero_prefix_list.sort();
-        zero_prefix_list.dedup();
-        let mut change_list = Vec::new();
-        for (other_name, other_int_type, _) in self.static_constants.iter() {
-            for (name, prefix) in zero_prefix_list.iter() {
-                if *other_name != *name
-                    && other_name.starts_with(prefix)
-                    && *other_int_type == "u64"
-                {
-                    change_list.push((name.clone(), other_int_type.clone()));
-                    break;
-                }
-            }
-        }
-        change_list.sort();
-        change_list.dedup();
-        for (name, int_type, val) in self.static_constants.iter_mut() {
-            for (change_name, change_int_type) in change_list.iter() {
-                if *name == *change_name {
-                    println!(
-                        "cargo:warning=macro {}:{}, {} -> {}",
-                        name, val, int_type, change_int_type
-                    );
-                    *int_type = change_int_type.clone();
-                }
-            }
+            let mut total_string = String::new();
+            total_string += "pub mod constants {\n";
+            total_string += &static_constants_vec
+                .iter()
+                .map(|(name, int_type, val): &(String, String, u64)| {
+                    format!("pub const {}: {} = {};", name, int_type, val)
+                })
+                .join("\n");
+            total_string += "\n}\n";
+            self.static_constants = total_string;
         }
         // gcc -S test.c -Wall -Wextra -std=c99 -Werror
 
@@ -854,16 +878,8 @@ impl State {
 
         let formatted_string = template_string.replace("%static_use_defs%", &static_use_string);
 
-        let formatted_string = formatted_string.replace(
-            "%static_constants%",
-            &self
-                .static_constants
-                .iter()
-                .map(|(name, int_type, val): &(String, String, u64)| {
-                    format!("pub const {}: {} = {};", name, int_type, val)
-                })
-                .join("\n"),
-        );
+        let formatted_string =
+            formatted_string.replace("%static_constants%", &self.static_constants);
 
         let formatted_string = formatted_string.replace(
             "%static_eal_functions%",
@@ -978,7 +994,7 @@ impl State {
                     .output();
                 if let Ok(ret) = ret {
                     if !ret.status.success() {
-                        skip_due_to.push(dep.clone());
+                        skip_due_to.push(dep);
                     }
                 }
             }
@@ -1030,6 +1046,7 @@ impl State {
         for dep in additional_libs {
             println!("cargo:rustc-link-lib={}", dep);
         }
+        println!("cargo:rustc-link-lib=bsd");
         println!("cargo:rustc-link-lib=numa");
     }
 }

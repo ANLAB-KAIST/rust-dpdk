@@ -1,4 +1,5 @@
 *
 !.gitignore
 !*.template
+!*.cache
 !*.c
