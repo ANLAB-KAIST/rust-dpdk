@@ -23,6 +23,7 @@ jobs:
     - name: Install DPDK
       run: |
           wget -O dpdk.tar.xz https://fast.dpdk.org/rel/dpdk-${DPDK_VERSION}.tar.xz
+          mkdir dpdk-src
           tar -xvJf dpdk.tar.xz -C dpdk-src --strip-components=1
           cd dpdk-src
           meson build
