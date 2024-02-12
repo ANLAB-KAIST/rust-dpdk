@@ -28,8 +28,8 @@ jobs:
           cd dpdk-src
           meson build
           ninja -C build
-          ninja -C build install
-          ldconfig
+          sudo ninja -C build install
+          sudo ldconfig
           rm -rf dpdk-src
     - name: Build
       run: cargo build --verbose
