@@ -1054,13 +1054,22 @@ impl State {
 fn main() {
     let mut state = State::new();
     state.check_os();
+    
+    println!("cargo:warning=1");
     state.check_compiler();
     state.find_dpdk();
     state.find_link_libs();
+    
+    println!("cargo:warning={:?}", state.system_include_path);
     state.make_all_in_one_header();
+    
+    println!("cargo:warning=2");
     state.extract_eal_apis();
+    println!("cargo:warning=3");
     state.generate_static_impls_and_link_pmds();
+    println!("cargo:warning=4");
     state.generate_rust_def();
+    println!("cargo:warning=5");
     state.generate_lib_rs();
     println!("cargo:warning={:?}", state.system_include_path);
     state.compile();
