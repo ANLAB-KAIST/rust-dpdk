@@ -1062,5 +1062,6 @@ fn main() {
     state.generate_static_impls_and_link_pmds();
     state.generate_rust_def();
     state.generate_lib_rs();
+    println!("cargo:warning={:?}", state.system_include_path);
     state.compile();
 }
