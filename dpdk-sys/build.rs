@@ -839,6 +839,7 @@ impl State {
         let target_path = self.out_path.join("dpdk.rs");
         bindgen::builder()
             .header(header_path.to_str().unwrap())
+            .clang_arg("-std=c99")
             .clang_arg(format!("-I{}", dpdk_include_path.to_str().unwrap()))
             .clang_arg(format!("-I{}", self.out_path.to_str().unwrap()))
             .clang_arg("-imacros")
