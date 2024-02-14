@@ -1,2 +1,2 @@
-#include <stdint.h>
+#include <cstdint>
 %header_list%
