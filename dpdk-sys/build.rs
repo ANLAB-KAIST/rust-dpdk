@@ -407,7 +407,7 @@ impl State {
         let target_path = self.out_path.join("dpdk.h");
         {
             let clang = clang::Clang::new().unwrap();
-            let index = clang::Index::new(&clang, true, true);
+            let index = clang::Index::new(&clang, false, true);
             println!("cargo:warning=2.1");
             let trans_unit = self.trans_unit_from_header(&index, target_path, true);
             println!("cargo:warning=2.2");
