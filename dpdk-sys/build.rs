@@ -112,6 +112,7 @@ impl State {
     ) -> clang::TranslationUnit<'a> {
         let mut argument = vec![
             "-march=native".into(),
+            "-std=c99".into(),
             format!(
                 "-I{}",
                 self.include_path.as_ref().unwrap().to_str().unwrap()
