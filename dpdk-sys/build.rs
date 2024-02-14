@@ -409,7 +409,7 @@ impl State {
             let clang = clang::Clang::new().unwrap();
             let index = clang::Index::new(&clang, true, true);
             println!("cargo:warning=2.1");
-            let trans_unit = self.trans_unit_from_header(&index, target_path, false);
+            let trans_unit = self.trans_unit_from_header(&index, target_path, true);
             println!("cargo:warning=2.2");
 
             // Iterate through each EAL header files and extract function definitions.
