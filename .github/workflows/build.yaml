@@ -24,7 +24,7 @@ jobs:
           mkdir dpdk-src
           tar -xvJf dpdk.tar.xz -C dpdk-src --strip-components=1
           cd dpdk-src
-          meson setup '-Ddisable_drivers=event/*,net/a*,net/b*,net/c*,net/d*,net/f*,net/g*,net/h*,net/m*,net/n*,net/o*,net/p*,net/q*,net/r*,net/s*,net/t*,net/v*,b*,com*,cry*,d*,e*,g*,ml*,raw*,reg*,v*,common' build
+          meson setup build
           ninja -C build
           sudo ninja -C build install
           sudo ldconfig
