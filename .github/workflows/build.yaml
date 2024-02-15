@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: self-hosted
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Install dependencies
       run: |
           sudo apt update && sudo apt install -y linux-headers-generic build-essential libnuma-dev git meson python3-pyelftools curl libclang-dev clang llvm-dev
@@ -29,12 +29,8 @@ jobs:
           sudo ninja -C build install
           sudo ldconfig
           rm -rf dpdk-src
-    - name: Install minimal nightly with clippy and rustfmt
-      uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: stable
-        components: rustfmt, clippy
+    - name: Install minimal Rust with clippy and rustfmt
+      run: curl -f -sSf https://sh.rustup.rs | bash -s -- -y --profile minimal --component clippy rustfmt
     - name: Build
       run: cargo build --verbose
     - name: Run tests
