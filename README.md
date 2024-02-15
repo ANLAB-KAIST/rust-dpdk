@@ -1,8 +1,7 @@
 # rust-dpdk
 
-[![Build Status](https://jenkins.redwit.io/buildStatus/icon?job=ANLAB-KAIST%2Frust-dpdk%2Fmain)](https://jenkins.redwit.io/job/ANLAB-KAIST/job/rust-dpdk/job/main/)
+[![Build Status](https://github.com/ANLAB-KAIST/rust-dpdk/actions/workflows/build.yml/badge.svg)](https://github.com/ANLAB-KAIST/rust-dpdk/actions/workflows/build.yml)
 
-Tested with <https://github.com/rust-lang/rust-bindgen> v0.65.
 Tested with <https://github.com/DPDK/dpdk.git> v22.11.
 
 ## Goals
@@ -48,5 +47,5 @@ If your NIC requires kernel drivers, they are found at the above link.
 Now add `rust-dpdk` to your project's `Cargo.toml` and use it!
 ```{.toml}
 [dependencies]
-rust-dpdk = { git = "https://github.com/ANLAB-KAIST/rust-dpdk.git" }
+rust-dpdk-sys = { git = "https://github.com/ANLAB-KAIST/rust-dpdk", branch = "main" }
 ```

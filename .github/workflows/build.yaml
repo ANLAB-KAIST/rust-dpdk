@@ -1,0 +1,37 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  DPDK_VERSION: 22.11.4
+
+jobs:
+  build:
+
+    runs-on: self-hosted
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install dependencies
+      run: |
+          sudo apt update && sudo apt install -y linux-headers-generic build-essential libnuma-dev git meson python3-pyelftools curl libclang-dev clang llvm-dev
+    - name: Install DPDK
+      run: |
+          wget -O dpdk.tar.xz https://fast.dpdk.org/rel/dpdk-${DPDK_VERSION}.tar.xz
+          mkdir dpdk-src
+          tar -xvJf dpdk.tar.xz -C dpdk-src --strip-components=1
+          cd dpdk-src
+          meson setup '-Ddisable_drivers=event/*,net/a*,net/b*,net/c*,net/d*,net/f*,net/g*,net/h*,net/m*,net/n*,net/o*,net/p*,net/q*,net/r*,net/s*,net/t*,net/v*,b*,com*,cry*,d*,e*,g*,ml*,raw*,reg*,v*,common' build
+          ninja -C build
+          sudo ninja -C build install
+          sudo ldconfig
+          rm -rf dpdk-src
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
