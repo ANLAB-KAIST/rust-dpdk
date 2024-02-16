@@ -31,12 +31,15 @@ Here, we include basic instructions to build DPDK and use this library.
 Commonly, following packages are required to build DPDK.
 ```{.sh}
 apt-get install -y curl git build-essential libnuma-dev meson # To download and build DPDK
-apt-get install -y linux-headers-amd64 # To build kernel drivers
+apt-get install -y linux-headers-`unmae -r` # To build kernel drivers
 apt-get install -y libclang-dev clang llvm-dev # To analyze DPDK headers and create bindings
 ```
 
+Download/Checkout dpdk source from <https://github.com/DPDK/dpdk.git> v22.11.
+
 DPDK can be installed by following commands:
 ```{.sh}
+cd <dpdk-source-path> # path where dpdk-<version>.tar.xz is extracted OR git repo checked out
 meson build
 ninja -C build
 ninja -C build install # sudo required
@@ -48,5 +51,5 @@ If your NIC requires kernel drivers, they are found at the above link.
 Now add `rust-dpdk` to your project's `Cargo.toml` and use it!
 ```{.toml}
 [dependencies]
-rust-dpdk = { git = "https://github.com/ANLAB-KAIST/rust-dpdk.git" }
+rust-dpdk = { git = "https://github.com/ANLAB-KAIST/rust-dpdk.git", package = "rust-dpdk-sys" }
 ```
