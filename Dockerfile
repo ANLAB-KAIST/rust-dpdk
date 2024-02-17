@@ -10,6 +10,8 @@ RUN apt-get install -y linux-headers-amd64
 RUN apt-get install -y build-essential libnuma-dev git meson python3-pyelftools
 RUN apt-get install -y curl
 RUN apt-get install -y libclang-dev clang llvm-dev
+# install libbsd-dev
+RUN apt-get install -y libbsd-dev
 
 RUN git clone -b v22.11 "http://dpdk.org/git/dpdk" /dpdk
 
