@@ -1,6 +1,6 @@
 # rust-dpdk
 
-[![Build Status](https://github.com/ANLAB-KAIST/rust-dpdk/actions/workflows/build.yml/badge.svg)](https://github.com/ANLAB-KAIST/rust-dpdk/actions/workflows/build.yml)
+[![Build Status](https://github.com/ANLAB-KAIST/rust-dpdk/actions/workflows/build.yaml/badge.svg)](https://github.com/ANLAB-KAIST/rust-dpdk/actions/workflows/build.yaml)
 
 Tested with <https://github.com/DPDK/dpdk.git> v22.11.
 
