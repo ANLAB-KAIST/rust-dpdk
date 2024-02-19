@@ -328,6 +328,7 @@ impl State {
                     continue 'outer;
                 }
             }
+            println!("cargo:warning=header-name: {}", file_name);
             new_vec.push(file.clone());
         }
         new_vec.sort_by(|left, right| {
