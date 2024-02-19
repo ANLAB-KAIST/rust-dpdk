@@ -305,7 +305,7 @@ impl State {
         ];
 
         // Remove blacklist headers
-        let blacklist_prefix = vec!["rte_acc_"];
+        let blacklist_prefix = vec!["rte_acc_", "rte_thash", "rte_hash"];
         let mut name_set: Vec<String> = vec![];
         for file in &headers {
             let file_name = String::from(file.file_stem().unwrap().to_str().unwrap());
@@ -440,7 +440,7 @@ impl State {
                 if clang::StorageClass::Static != storage || !(is_decl && is_inline_fn) {
                     continue;
                 }
-                println!("cargo:warning={} {} {} {:?}", name, is_decl, f.is_inline_function(), storage);
+                // println!("cargo:warning={} {} {} {:?}", name, is_decl, f.is_inline_function(), storage);
 
                 // Extract type names in C and Rust.
                 let c_return_type_string = return_type.get_display_name();
