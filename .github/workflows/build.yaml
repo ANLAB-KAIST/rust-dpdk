@@ -17,7 +17,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: Install dependencies
       run: |
-          sudo apt update && sudo apt install -y linux-headers-generic build-essential libnuma-dev git meson python3-pyelftools curl libclang-dev clang llvm-dev
+          sudo apt update && sudo apt install -y linux-headers-generic build-essential libnuma-dev git meson python3-pyelftools curl libclang-dev clang llvm-dev libbsd-dev
     - name: Install DPDK
       run: |
           wget -O dpdk.tar.xz https://fast.dpdk.org/rel/dpdk-${DPDK_VERSION}.tar.xz

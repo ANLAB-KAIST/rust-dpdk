@@ -329,7 +329,7 @@ impl State {
                     continue 'outer;
                 }
             }
-            println!("cargo:warning=header-name: {}", file_name);
+            // println!("cargo:warning=header-name: {}", file_name);
             new_vec.push(file.clone());
         }
         new_vec.sort_by(|left, right| {
@@ -843,11 +843,12 @@ impl State {
             .clang_arg(dpdk_config_path.to_str().unwrap())
             .clang_arg("-march=native")
             .clang_arg("-Wno-everything")
+            .clang_arg("-DALLOW_INTERNAL_API") // We will not use internal API, but it is necessary to generate bindings.
             .opaque_type("vmbus_bufring")
             .opaque_type("rte_avp_desc")
             .opaque_type("rte_.*_hdr")
             .opaque_type("rte_arp_ipv4")
-            .blocklist_function("_*")
+            .opaque_type("__*")
             .generate()
             .unwrap()
             .write_to_file(target_path)
