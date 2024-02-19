@@ -305,7 +305,7 @@ impl State {
         ];
 
         // Remove blacklist headers
-        let blacklist_prefix = vec!["rte_acc_", "rte_thash", "rte_hash"];
+        let blacklist_prefix = vec!["rte_acc_"];
         let mut name_set: Vec<String> = vec![];
         for file in &headers {
             let file_name = String::from(file.file_stem().unwrap().to_str().unwrap());
@@ -1057,16 +1057,10 @@ fn main() {
     state.check_compiler();
     state.find_dpdk();
     state.find_link_libs();
-    println!("cargo:warning=phase1");
     state.make_all_in_one_header();
-    println!("cargo:warning=phase2");
     state.extract_eal_apis();
-    println!("cargo:warning=phase3");
     state.generate_static_impls_and_link_pmds();
-    println!("cargo:warning=phase4");
     state.generate_rust_def();
-    println!("cargo:warning=phase5");
     state.generate_lib_rs();
-    println!("cargo:warning=phase6");
     state.compile();
 }
