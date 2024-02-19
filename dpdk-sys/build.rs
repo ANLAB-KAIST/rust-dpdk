@@ -422,7 +422,6 @@ impl State {
                 let storage = some_or!(f.get_storage_class(), continue);
                 let return_type = some_or!(f.get_result_type(), continue);
                 let is_decl = f.is_declaration();
-                let is_def = f.is_definition();
                 let is_inline_fn = f.is_inline_function();
 
                 let comment = f
@@ -438,10 +437,7 @@ impl State {
                     // Skip hidden implementations
                     continue;
                 }
-                if clang::StorageClass::Static == storage && !(is_decl && is_inline_fn) {
-                    continue;
-                }
-                if clang::StorageClass::None == storage && !is_def {
+                if clang::StorageClass::Static != storage || !(is_decl && is_inline_fn) {
                     continue;
                 }
                 println!("cargo:warning={} {} {} {:?}", name, is_decl, f.is_inline_function(), storage);
