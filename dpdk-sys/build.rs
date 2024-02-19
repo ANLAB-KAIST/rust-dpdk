@@ -301,8 +301,9 @@ impl State {
 
         // Heuristically remove platform-specific headers
         let platform_set = vec![
-            "x86", "x86_64", "x64", "arm", "arm32", "arm64", "amd64", "generic",
+            "x86", "x86_64", "x64", "arm", "arm32", "arm64", "amd64", "generic", "gfni", "32", "64",
         ];
+
         // Remove blacklist headers
         let blacklist_prefix = vec!["rte_acc_"];
         let mut name_set: Vec<String> = vec![];
@@ -328,6 +329,7 @@ impl State {
                     continue 'outer;
                 }
             }
+            // println!("cargo:warning=header-name: {}", file_name);
             new_vec.push(file.clone());
         }
         new_vec.sort_by(|left, right| {
@@ -420,7 +422,6 @@ impl State {
                 let storage = some_or!(f.get_storage_class(), continue);
                 let return_type = some_or!(f.get_result_type(), continue);
                 let is_decl = f.is_declaration();
-                let is_def = f.is_definition();
                 let is_inline_fn = f.is_inline_function();
 
                 let comment = f
@@ -436,10 +437,7 @@ impl State {
                     // Skip hidden implementations
                     continue;
                 }
-                if clang::StorageClass::Static == storage && !(is_decl && is_inline_fn) {
-                    continue;
-                }
-                if clang::StorageClass::None == storage && !is_def {
+                if clang::StorageClass::Static != storage || !(is_decl && is_inline_fn) {
                     continue;
                 }
                 // println!("cargo:warning={} {} {} {:?}", name, is_decl, f.is_inline_function(), storage);
@@ -845,10 +843,12 @@ impl State {
             .clang_arg(dpdk_config_path.to_str().unwrap())
             .clang_arg("-march=native")
             .clang_arg("-Wno-everything")
+            .clang_arg("-DALLOW_INTERNAL_API") // We will not use internal API, but it is necessary to generate bindings.
             .opaque_type("vmbus_bufring")
             .opaque_type("rte_avp_desc")
             .opaque_type("rte_.*_hdr")
             .opaque_type("rte_arp_ipv4")
+            .opaque_type("__*")
             .generate()
             .unwrap()
             .write_to_file(target_path)
