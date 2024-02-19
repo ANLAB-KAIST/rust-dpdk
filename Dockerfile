@@ -20,7 +20,7 @@ RUN ldconfig
 WORKDIR /
 RUN rm -rf /dpdk
 
-# For rustup
+# Init user account
 ENV USER_NAME user
 RUN useradd -ms /bin/bash $USER_NAME
 
@@ -33,5 +33,12 @@ RUN chmod 444 /rust-toolchain
 RUN su -c "rustup toolchain install `cat /rust-toolchain | tr -d ' \n'` --profile minimal --component clippy rustfmt" - $USER_NAME
 RUN rm /rust-toolchain
 # End of rust user install
+
+# Beginning of user ci script
+ADD . /home/$USER_NAME/ci
+RUN chown -R $USER_NAME:$USER_NAME /home/$USER_NAME/ci
+WORKDIR /home/$USER_NAME/ci
+RUN su -c "./ci.sh" - $USER_NAME
+# End of user ci script
 
 WORKDIR /
