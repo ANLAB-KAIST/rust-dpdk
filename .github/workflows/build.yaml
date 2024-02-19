@@ -32,7 +32,7 @@ jobs:
     - name: Install minimal Rust with clippy and rustfmt
       run: |
           curl -f -sSf https://sh.rustup.rs | bash -s -- -y --profile minimal --component clippy rustfmt
-          source "$HOME/.cargo/env"
+          echo "$HOME/.cargo/bin" >> $GITHUB_ENV
     - name: Build
       run: cargo build --verbose
     - name: Run tests
