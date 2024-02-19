@@ -37,9 +37,9 @@ RUN rm /rust-toolchain
 # End of rust user install
 
 # Beginning of user ci script
-ADD . /home/$USER_NAME/ci
-RUN chown -R $USER_NAME:$USER_NAME /home/$USER_NAME/ci
-WORKDIR /home/$USER_NAME/ci
+ADD . /home/$USER_NAME/
+RUN chown -R $USER_NAME:$USER_NAME /home/$USER_NAME
+WORKDIR /home/$USER_NAME
 RUN su -c "./ci.sh" - $USER_NAME
 # End of user ci script
 
