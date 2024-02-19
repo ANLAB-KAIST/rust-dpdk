@@ -1,14 +1,16 @@
 FROM debian:latest
 
 ENV RTE_SDK=/usr/local/share/dpdk
+ENV DPDK_VERSION 22.11.4
 
-RUN echo "APT last updated: 2023/05/01"
+RUN echo "APT last updated: 2024/01/01"
 
 RUN apt-get update -y && apt-get dist-upgrade -y && apt-get autoremove -y && apt-get autoclean -y
 RUN apt-get install -y linux-headers-generic build-essential libnuma-dev git meson python3-pyelftools curl libclang-dev clang llvm-dev libbsd-dev
-RUN apt-get install -y curl git
-
-RUN git clone -b v22.11 "http://dpdk.org/git/dpdk" /dpdk
+RUN apt-get install -y curl git tar
+RUN mkdir dpdk
+RUN curl -o dpdk.tar.xz https://fast.dpdk.org/rel/dpdk-${DPDK_VERSION}.tar.xz
+RUN tar -xvJf dpdk.tar.xz -C dpdk --strip-components=1
 
 WORKDIR /dpdk
 
