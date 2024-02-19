@@ -444,7 +444,7 @@ impl State {
                 if clang::StorageClass::None == storage && !is_def {
                     continue;
                 }
-                // println!("cargo:warning={} {} {} {:?}", name, is_decl, f.is_inline_function(), storage);
+                println!("cargo:warning={} {} {} {:?}", name, is_decl, f.is_inline_function(), storage);
 
                 // Extract type names in C and Rust.
                 let c_return_type_string = return_type.get_display_name();
