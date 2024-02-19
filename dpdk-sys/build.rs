@@ -303,6 +303,7 @@ impl State {
         let platform_set = vec![
             "x86", "x86_64", "x64", "arm", "arm32", "arm64", "amd64", "generic", "gfni", "32", "64",
         ];
+
         // Remove blacklist headers
         let blacklist_prefix = vec!["rte_acc_"];
         let mut name_set: Vec<String> = vec![];
@@ -325,6 +326,14 @@ impl State {
             }
             for black in &blacklist_prefix {
                 if file_name.starts_with(black) {
+                    continue 'outer;
+                }
+            }
+            for lib_name in &self.dpdk_links {
+                if !file_name.starts_with(&format!(
+                    "rte_{}",
+                    lib_name.file_stem().unwrap().to_str().unwrap()
+                )) {
                     continue 'outer;
                 }
             }
