@@ -29,15 +29,13 @@ RUN useradd -ms /bin/bash $USER_NAME
 # Rust user install
 WORKDIR /home/$USER_NAME
 RUN su -c "curl -f -sSf https://sh.rustup.rs | bash -s -- -y --default-toolchain none" - $USER_NAME
-ADD ./rust-toolchain /
-RUN chmod 444 /rust-toolchain
+COPY --chown=$USER_NAME:$USER_NAME ./rust-toolchain /
 RUN su -c "rustup toolchain install `cat /rust-toolchain | tr -d ' \n'` --profile minimal --component clippy rustfmt" - $USER_NAME
 RUN rm /rust-toolchain
 WORKDIR /
 
 # User ci script
-ADD . /home/$USER_NAME/
-RUN chown -R $USER_NAME:$USER_NAME /home/$USER_NAME
+COPY --chown=$USER_NAME:$USER_NAME . /home/$USER_NAME/
 WORKDIR /home/$USER_NAME
 RUN su -c "./ci.sh" - $USER_NAME
 WORKDIR /
