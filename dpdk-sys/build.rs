@@ -329,14 +329,6 @@ impl State {
                     continue 'outer;
                 }
             }
-            for lib_name in &self.dpdk_links {
-                if !file_name.starts_with(&format!(
-                    "rte_{}",
-                    lib_name.file_stem().unwrap().to_str().unwrap()
-                )) {
-                    continue 'outer;
-                }
-            }
             println!("cargo:warning=header-name: {}", file_name);
             new_vec.push(file.clone());
         }
