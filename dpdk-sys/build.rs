@@ -847,6 +847,7 @@ impl State {
             .opaque_type("rte_avp_desc")
             .opaque_type("rte_.*_hdr")
             .opaque_type("rte_arp_ipv4")
+            .blocklist_function("_*")
             .generate()
             .unwrap()
             .write_to_file(target_path)
