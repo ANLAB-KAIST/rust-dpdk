@@ -12,7 +12,7 @@ ENV DPDK_VERSION 22.11.4
 
 # Install DPDK
 RUN mkdir /dpdk
-RUN curl -o dpdk.tar.xz https://fast.dpdk.org/rel/dpdk-${DPDK_VERSION}.tar.xz
+RUN curl -s -o dpdk.tar.xz https://fast.dpdk.org/rel/dpdk-${DPDK_VERSION}.tar.xz
 RUN tar -xvJf dpdk.tar.xz -C dpdk --strip-components=1
 WORKDIR /dpdk
 RUN meson setup build
