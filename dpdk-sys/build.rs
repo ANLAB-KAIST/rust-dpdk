@@ -301,7 +301,7 @@ impl State {
 
         // Heuristically remove platform-specific headers
         let platform_set = vec![
-            "x86", "x86_64", "x64", "arm", "arm32", "arm64", "amd64", "generic",
+            "x86", "x86_64", "x64", "arm", "arm32", "arm64", "amd64", "generic", "gfni", "32", "64",
         ];
         // Remove blacklist headers
         let blacklist_prefix = vec!["rte_acc_"];
