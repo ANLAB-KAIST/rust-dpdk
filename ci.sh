@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "hello world"
+set -x
 
 # Check program version
 clang --version
