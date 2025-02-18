@@ -30,7 +30,7 @@ Here, we include basic instructions to build DPDK and use this library.
 Commonly, following packages are required to build DPDK.
 ```sh
 apt-get install -y curl git build-essential libnuma-dev meson python3-pyelftools # To download and build DPDK
-apt-get install -y linux-headers-`unmae -r` # To build kernel drivers
+apt-get install -y linux-headers-`uname -r` # To build kernel drivers
 apt-get install -y libclang-dev clang llvm-dev # To analyze DPDK headers and create bindings
 ```
 
