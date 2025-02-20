@@ -68,6 +68,9 @@ struct State {
     /// DPDK config file (will be included as a predefined macro file).
     dpdk_config: Option<PathBuf>,
 
+    // DPDK pkg-config result
+    dpdk: Option<pkg_config::Library>,
+
     /// Use definitions for automatically found EAL APIs.
     eal_function_use_defs: Vec<String>,
 
@@ -96,6 +99,7 @@ impl State {
             dpdk_headers: Default::default(),
             dpdk_links: Default::default(),
             dpdk_config: Default::default(),
+            dpdk: Default::default(),
             eal_function_use_defs: Default::default(),
             global_eal_function_use_defs: Default::default(),
             static_functions: Default::default(),
@@ -217,6 +221,7 @@ impl State {
         println!("cargo:rerun-if-env-changed=RTE_TARGET");
 
         self.dpdk_config = Some(config_header);
+        self.dpdk = Some(lib);
     }
 
     /// Search through DPDK's link dir and extract library names.
@@ -480,24 +485,32 @@ impl State {
                     if target_bin_path.exists() {
                         fs::remove_file(target_bin_path.clone()).unwrap();
                     }
-                    let ret = Command::new(cc_name.clone())
+                    let dpdk = self.dpdk.as_ref().unwrap();
+                    let includes = dpdk.include_paths.iter().map(|x| format!("-I{}", x.to_str().unwrap()));
+                    let libs = dpdk.libs.iter().map(|x| format!("-l{}", x));
+                    let ret: std::result::Result<std::process::Output, Error> = Command::new(cc_name.clone())
                         .arg("-Wall")
                         .arg("-Wextra")
-                        .arg("-std=c99")
-                        .arg(format!("-I{}", dpdk_include))
+                        .arg("-std=gnu11")
+                        .args(includes)
                         .arg(format!("-I{}", output_include))
-                        .arg("-imacros")
+                        .arg("-include")
                         .arg(dpdk_config_path)
                         .arg("-march=native")
                         .arg(format!("-D__CHECK_FN={}", name))
                         .arg("-o")
                         .arg(target_bin_path.clone())
+                        .args(libs)
                         .arg(test_template.clone())
                         .output();
                     if let Ok(ret) = ret {
                         if ret.status.success() {
                             success = true;
-                            println!("cargo:warning={} compile success {}", name, success);
+                            // println!("cargo:warning={} compile success {}", name, success);
+                        }else{
+
+                            println!("cargo:warning={:?} compile failed",ret);
+                            panic!("@@@");
                         }
                     }
                     is_always_inline_fn.insert(name.clone(), success);
@@ -740,7 +753,7 @@ impl State {
                                 .arg("-Wall")
                                 .arg("-Wextra")
                                 .arg("-Werror")
-                                .arg("-std=c99")
+                                .arg("-std=gnu11")
                                 .arg(format!("-I{}", dpdk_include))
                                 .arg(format!("-I{}", output_include))
                                 .arg("-imacros")
@@ -861,7 +874,7 @@ impl State {
             total_string += "\n}\n";
             self.static_constants = total_string;
         }
-        // gcc -S test.c -Wall -Wextra -std=c99 -Werror
+        // gcc -S test.c -Wall -Wextra -std=gnu11 -Werror
 
         let header_path: PathBuf = self.out_path.join("static.h");
         let header_template = self.project_path.join("gen/static.h.template");
