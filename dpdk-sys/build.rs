@@ -413,6 +413,7 @@ impl State {
         let mut use_def_map = HashMap::new();
         let mut global_use_def_map = HashMap::new();
         let target_path = self.out_path.join("dpdk.h");
+        let mut is_always_inline_fn: HashMap<String, bool> = HashMap::new();
         {
             let clang = clang::Clang::new().unwrap();
             let index = clang::Index::new(&clang, true, true);
@@ -449,7 +450,14 @@ impl State {
                 }
                 // println!("cargo:warning={} {} {} {}", name, f.has_attributes(), f.is_inline_function(), f.is_const_method());
                 let mut success = true;
-                if f.has_attributes() && f.is_inline_function() && !f.is_builtin_macro() && !f.is_function_like_macro(){
+                let do_check;
+                if let Some(true) = is_always_inline_fn.get(&name) {
+                    do_check = false;
+                    success = false;
+                } else {
+                    do_check = true;
+                }
+                if do_check {
                     success = false;
                     // Should check whether __always_inline is used.
                     let test_template = self.project_path.join("gen/inline_test.c");
@@ -472,7 +480,6 @@ impl State {
                     let ret = Command::new(cc_name.clone())
                         .arg("-Wall")
                         .arg("-Wextra")
-                        .arg("-Werror")
                         .arg("-std=c99")
                         .arg(format!("-I{}", dpdk_include))
                         .arg(format!("-I{}", output_include))
@@ -483,17 +490,17 @@ impl State {
                         .arg("-o")
                         .arg(target_bin_path.clone())
                         .arg(test_template.clone())
-                        .arg("-lrte_eal")
                         .output();
                     if let Ok(ret) = ret {
                         if ret.status.success() {
                             success = true;
-                            // println!("cargo:warning={} compile success {}", name, success);
+                            println!("cargo:warning={} compile success {}", name, success);
                         }
                     }
+                    is_always_inline_fn.insert(name.clone(), success);
                 }
                 if !success {
-                    // println!("cargo:warning={} compile failed", name);
+                    println!("cargo:warning={} compile failed", name);
                     continue;
                 }
 
