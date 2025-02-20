@@ -8,6 +8,7 @@ extern crate pkg_config;
 extern crate regex;
 
 use etrace::some_or;
+use etrace::ok_or;
 use itertools::Itertools;
 use regex::Regex;
 use std::cmp::Ordering;
@@ -182,24 +183,30 @@ impl State {
     fn find_dpdk(&mut self) {
         // To find correct lib path of this platform.
 
-        let lib = pkg_config::Config::new().statik(true).probe("libdpdk").unwrap();
+        let dpdk: std::result::Result<pkg_config::Library, pkg_config::Error> = pkg_config::Config::new().statik(true).probe("libdpdk");
+        let dpdk = ok_or!(dpdk, panic!("DPDK is not installed on your system! (Cannot find libdpdk)"));
+    
+        
+        for include_path in &dpdk.include_paths{
+            let config_header = include_path.join("rte_config.h");
+            if config_header.exists(){
+                println!("cargo:rerun-if-changed={}", include_path.to_str().unwrap());
+                self.include_path = Some(include_path.clone());
+                self.dpdk_config = Some(config_header);
+            }
+        }
+        if self.dpdk_config.is_none() || self.include_path.is_none(){
+            panic!("DPDK is not installed on your system! (Cannot find rte_config.h)");
+        }
 
-        let include_path = if !lib.include_paths.is_empty() {
-            lib.include_paths[0].clone()
+        let library_path = if !dpdk.link_paths.is_empty() {
+            dpdk.link_paths[0].clone()
         } else {
-            panic!("DPDK is not installed on your system! (Cannot find libdpdk)");
+            panic!("DPDK is not installed on your system! (Cannot find library path)");
         };
 
-        let library_path = if !lib.link_paths.is_empty() {
-            lib.link_paths[0].clone()
-        } else {
-            panic!("DPDK is not installed on your system! (Cannot find libdpdk)");
-        };
-
-        println!("cargo:rerun-if-changed={}", include_path.to_str().unwrap());
         println!("cargo:rerun-if-changed={}", library_path.to_str().unwrap());
-        let config_header = include_path.join("rte_config.h");
-        self.include_path = Some(include_path);
+        
         self.library_path = Some(library_path);
         for entry in self
             .project_path
@@ -220,8 +227,7 @@ impl State {
         println!("cargo:rerun-if-env-changed=RTE_SDK");
         println!("cargo:rerun-if-env-changed=RTE_TARGET");
 
-        self.dpdk_config = Some(config_header);
-        self.dpdk = Some(lib);
+        self.dpdk = Some(dpdk);
     }
 
     /// Search through DPDK's link dir and extract library names.
