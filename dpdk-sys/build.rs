@@ -425,12 +425,19 @@ impl State {
         let mut use_def_map = HashMap::new();
         let mut global_use_def_map = HashMap::new();
         let target_path = self.out_path.join("dpdk.h");
-        let mut is_always_inline_fn: HashMap<String, bool> = HashMap::new();
+        // let mut is_always_inline_fn: HashMap<String, bool> = HashMap::new();
         {
             let clang = clang::Clang::new().unwrap();
             let index = clang::Index::new(&clang, true, true);
             let trans_unit = self.trans_unit_from_header(&index, target_path, false);
-
+            // panic!(
+            //     "{:#?}",
+            //     trans_unit
+            //         .get_entity()
+            //         .get_children()
+            //         .into_iter()
+            //         .collect::<Vec<_>>()
+            // );
             // Iterate through each EAL header files and extract function definitions.
             'each_function: for f in trans_unit
                 .get_entity()
@@ -460,6 +467,7 @@ impl State {
                 if clang::StorageClass::Static != storage || !(is_decl && is_inline_fn) {
                     continue;
                 }
+                /*
                 // println!("cargo:warning={} {} {} {}", name, f.has_attributes(), f.is_inline_function(), f.is_const_method());
                 let mut success = true;
                 let do_check;
@@ -497,7 +505,8 @@ impl State {
                         .include_paths
                         .iter()
                         .map(|x| format!("-I{}", x.to_str().unwrap()));
-                    let libs = dpdk.libs.iter().map(|x| format!("-l{}", x));
+                    // let libs = dpdk.libs.iter().map(|x| format!("-l{}", x));
+                    // NOTE: do not link libs here. The point of below is to check compilation without symbols
                     let ret: std::result::Result<std::process::Output, Error> =
                         Command::new(cc_name.clone())
                             .arg("-Wall")
@@ -511,24 +520,26 @@ impl State {
                             .arg(format!("-D__CHECK_FN={}", name))
                             .arg("-o")
                             .arg(target_bin_path.clone())
-                            .args(libs)
+                            // .args(libs)
                             .arg(test_template.clone())
                             .output();
                     if let Ok(ret) = ret {
                         if ret.status.success() {
                             success = true;
-                            // println!("cargo:warning={} compile success {}", name, success);
+                            println!("cargo:warning={} compile success {}", name, success);
+                            panic!("@@");
                         } else {
-                            panic!("cargo:warning={:?} compile failed", ret);
+                            println!("cargo:warning={:?} compile failed", ret);
+                            panic!("@@@");
                         }
                     }
                     is_always_inline_fn.insert(name.clone(), success);
                 }
                 if !success {
-                    println!("cargo:warning={} compile failed", name);
+                    // println!("cargo:warning={} compile failed", name);
                     continue;
                 }
-
+                */
                 // Extract type names in C and Rust.
                 let c_return_type_string = return_type.get_display_name();
                 let rust_return_type_string =
