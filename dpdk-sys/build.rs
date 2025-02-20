@@ -182,7 +182,7 @@ impl State {
     fn find_dpdk(&mut self) {
         // To find correct lib path of this platform.
 
-        let lib = pkg_config::probe_library("libdpdk").unwrap();
+        let lib = pkg_config::Config::new().statik(true).probe("libdpdk").unwrap();
 
         let include_path = if !lib.include_paths.is_empty() {
             lib.include_paths[0].clone()
