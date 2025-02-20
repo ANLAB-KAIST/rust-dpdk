@@ -7,6 +7,7 @@ extern crate num_cpus;
 extern crate pkg_config;
 extern crate regex;
 
+use etrace::ok_or;
 use etrace::some_or;
 use itertools::Itertools;
 use regex::Regex;
@@ -68,6 +69,9 @@ struct State {
     /// DPDK config file (will be included as a predefined macro file).
     dpdk_config: Option<PathBuf>,
 
+    // DPDK pkg-config result
+    dpdk: Option<pkg_config::Library>,
+
     /// Use definitions for automatically found EAL APIs.
     eal_function_use_defs: Vec<String>,
 
@@ -96,6 +100,7 @@ impl State {
             dpdk_headers: Default::default(),
             dpdk_links: Default::default(),
             dpdk_config: Default::default(),
+            dpdk: Default::default(),
             eal_function_use_defs: Default::default(),
             global_eal_function_use_defs: Default::default(),
             static_functions: Default::default(),
@@ -178,24 +183,33 @@ impl State {
     fn find_dpdk(&mut self) {
         // To find correct lib path of this platform.
 
-        let lib = pkg_config::probe_library("libdpdk").unwrap();
+        let dpdk: std::result::Result<pkg_config::Library, pkg_config::Error> =
+            pkg_config::Config::new().statik(true).probe("libdpdk");
+        let dpdk = ok_or!(
+            dpdk,
+            panic!("DPDK is not installed on your system! (Cannot find libdpdk)")
+        );
 
-        let include_path = if !lib.include_paths.is_empty() {
-            lib.include_paths[0].clone()
+        for include_path in &dpdk.include_paths {
+            let config_header = include_path.join("rte_config.h");
+            if config_header.exists() {
+                println!("cargo:rerun-if-changed={}", include_path.to_str().unwrap());
+                self.include_path = Some(include_path.clone());
+                self.dpdk_config = Some(config_header);
+            }
+        }
+        if self.dpdk_config.is_none() || self.include_path.is_none() {
+            panic!("DPDK is not installed on your system! (Cannot find rte_config.h)");
+        }
+
+        let library_path = if !dpdk.link_paths.is_empty() {
+            dpdk.link_paths[0].clone()
         } else {
-            panic!("DPDK is not installed on your system! (Cannot find libdpdk)");
+            panic!("DPDK is not installed on your system! (Cannot find library path)");
         };
 
-        let library_path = if !lib.link_paths.is_empty() {
-            lib.link_paths[0].clone()
-        } else {
-            panic!("DPDK is not installed on your system! (Cannot find libdpdk)");
-        };
-
-        println!("cargo:rerun-if-changed={}", include_path.to_str().unwrap());
         println!("cargo:rerun-if-changed={}", library_path.to_str().unwrap());
-        let config_header = include_path.join("rte_config.h");
-        self.include_path = Some(include_path);
+
         self.library_path = Some(library_path);
         for entry in self
             .project_path
@@ -216,7 +230,7 @@ impl State {
         println!("cargo:rerun-if-env-changed=RTE_SDK");
         println!("cargo:rerun-if-env-changed=RTE_TARGET");
 
-        self.dpdk_config = Some(config_header);
+        self.dpdk = Some(dpdk);
     }
 
     /// Search through DPDK's link dir and extract library names.
@@ -411,12 +425,19 @@ impl State {
         let mut use_def_map = HashMap::new();
         let mut global_use_def_map = HashMap::new();
         let target_path = self.out_path.join("dpdk.h");
-        let mut is_always_inline_fn: HashMap<String, bool> = HashMap::new();
+        // let mut is_always_inline_fn: HashMap<String, bool> = HashMap::new();
         {
             let clang = clang::Clang::new().unwrap();
             let index = clang::Index::new(&clang, true, true);
             let trans_unit = self.trans_unit_from_header(&index, target_path, false);
-
+            // panic!(
+            //     "{:#?}",
+            //     trans_unit
+            //         .get_entity()
+            //         .get_children()
+            //         .into_iter()
+            //         .collect::<Vec<_>>()
+            // );
             // Iterate through each EAL header files and extract function definitions.
             'each_function: for f in trans_unit
                 .get_entity()
@@ -446,6 +467,7 @@ impl State {
                 if clang::StorageClass::Static != storage || !(is_decl && is_inline_fn) {
                     continue;
                 }
+                /*
                 // println!("cargo:warning={} {} {} {}", name, f.has_attributes(), f.is_inline_function(), f.is_const_method());
                 let mut success = true;
                 let do_check;
@@ -462,46 +484,62 @@ impl State {
                     let builder = cc::Build::new();
                     let compiler = builder.get_compiler();
                     let cc_name = compiler.path().to_str().unwrap().to_string();
-        
-                    let dpdk_include_path = self.include_path.as_ref().unwrap();
-                    let dpdk_config_path = self.dpdk_config.as_ref().unwrap().to_str().unwrap().to_string();
-                    let dpdk_include = dpdk_include_path.to_str().unwrap().to_string();
+
+                    let dpdk_config_path = self
+                        .dpdk_config
+                        .as_ref()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_string();
                     let output_include = self.out_path.to_str().unwrap().to_string();
                     let out_path = self.out_path.clone();
 
-                    let target_bin_path =
-                        out_path.join(format!("inline_test_{}", name));
+                    let target_bin_path = out_path.join(format!("inline_test_{}", name));
 
                     if target_bin_path.exists() {
                         fs::remove_file(target_bin_path.clone()).unwrap();
                     }
-                    let ret = Command::new(cc_name.clone())
-                        .arg("-Wall")
-                        .arg("-Wextra")
-                        .arg("-std=c99")
-                        .arg(format!("-I{}", dpdk_include))
-                        .arg(format!("-I{}", output_include))
-                        .arg("-imacros")
-                        .arg(dpdk_config_path)
-                        .arg("-march=native")
-                        .arg(format!("-D__CHECK_FN={}", name))
-                        .arg("-o")
-                        .arg(target_bin_path.clone())
-                        .arg(test_template.clone())
-                        .output();
+                    let dpdk = self.dpdk.as_ref().unwrap();
+                    let includes = dpdk
+                        .include_paths
+                        .iter()
+                        .map(|x| format!("-I{}", x.to_str().unwrap()));
+                    // let libs = dpdk.libs.iter().map(|x| format!("-l{}", x));
+                    // NOTE: do not link libs here. The point of below is to check compilation without symbols
+                    let ret: std::result::Result<std::process::Output, Error> =
+                        Command::new(cc_name.clone())
+                            .arg("-Wall")
+                            .arg("-Wextra")
+                            .arg("-std=gnu11")
+                            .args(includes)
+                            .arg(format!("-I{}", output_include))
+                            .arg("-include")
+                            .arg(dpdk_config_path)
+                            .arg("-march=native")
+                            .arg(format!("-D__CHECK_FN={}", name))
+                            .arg("-o")
+                            .arg(target_bin_path.clone())
+                            // .args(libs)
+                            .arg(test_template.clone())
+                            .output();
                     if let Ok(ret) = ret {
                         if ret.status.success() {
                             success = true;
                             println!("cargo:warning={} compile success {}", name, success);
+                            panic!("@@");
+                        } else {
+                            println!("cargo:warning={:?} compile failed", ret);
+                            panic!("@@@");
                         }
                     }
                     is_always_inline_fn.insert(name.clone(), success);
                 }
                 if !success {
-                    println!("cargo:warning={} compile failed", name);
+                    // println!("cargo:warning={} compile failed", name);
                     continue;
                 }
-
+                */
                 // Extract type names in C and Rust.
                 let c_return_type_string = return_type.get_display_name();
                 let rust_return_type_string =
@@ -735,7 +773,7 @@ impl State {
                                 .arg("-Wall")
                                 .arg("-Wextra")
                                 .arg("-Werror")
-                                .arg("-std=c99")
+                                .arg("-std=gnu11")
                                 .arg(format!("-I{}", dpdk_include))
                                 .arg(format!("-I{}", output_include))
                                 .arg("-imacros")
@@ -856,7 +894,7 @@ impl State {
             total_string += "\n}\n";
             self.static_constants = total_string;
         }
-        // gcc -S test.c -Wall -Wextra -std=c99 -Werror
+        // gcc -S test.c -Wall -Wextra -std=gnu11 -Werror
 
         let header_path: PathBuf = self.out_path.join("static.h");
         let header_template = self.project_path.join("gen/static.h.template");

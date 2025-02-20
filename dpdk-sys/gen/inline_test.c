@@ -8,6 +8,7 @@
 void __attribute__ ((noinline)) test_fn() 
 {
     void* __unused = __CHECK_FN;
+    (void)__unused;
 }
 
 int main() {
