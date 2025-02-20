@@ -477,7 +477,6 @@ impl State {
                     let compiler = builder.get_compiler();
                     let cc_name = compiler.path().to_str().unwrap().to_string();
 
-                    let dpdk_include_path = self.include_path.as_ref().unwrap();
                     let dpdk_config_path = self
                         .dpdk_config
                         .as_ref()
@@ -485,7 +484,6 @@ impl State {
                         .to_str()
                         .unwrap()
                         .to_string();
-                    let dpdk_include = dpdk_include_path.to_str().unwrap().to_string();
                     let output_include = self.out_path.to_str().unwrap().to_string();
                     let out_path = self.out_path.clone();
 
