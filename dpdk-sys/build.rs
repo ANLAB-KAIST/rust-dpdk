@@ -7,8 +7,8 @@ extern crate num_cpus;
 extern crate pkg_config;
 extern crate regex;
 
-use etrace::some_or;
 use etrace::ok_or;
+use etrace::some_or;
 use itertools::Itertools;
 use regex::Regex;
 use std::cmp::Ordering;
@@ -183,19 +183,22 @@ impl State {
     fn find_dpdk(&mut self) {
         // To find correct lib path of this platform.
 
-        let dpdk: std::result::Result<pkg_config::Library, pkg_config::Error> = pkg_config::Config::new().statik(true).probe("libdpdk");
-        let dpdk = ok_or!(dpdk, panic!("DPDK is not installed on your system! (Cannot find libdpdk)"));
-    
-        
-        for include_path in &dpdk.include_paths{
+        let dpdk: std::result::Result<pkg_config::Library, pkg_config::Error> =
+            pkg_config::Config::new().statik(true).probe("libdpdk");
+        let dpdk = ok_or!(
+            dpdk,
+            panic!("DPDK is not installed on your system! (Cannot find libdpdk)")
+        );
+
+        for include_path in &dpdk.include_paths {
             let config_header = include_path.join("rte_config.h");
-            if config_header.exists(){
+            if config_header.exists() {
                 println!("cargo:rerun-if-changed={}", include_path.to_str().unwrap());
                 self.include_path = Some(include_path.clone());
                 self.dpdk_config = Some(config_header);
             }
         }
-        if self.dpdk_config.is_none() || self.include_path.is_none(){
+        if self.dpdk_config.is_none() || self.include_path.is_none() {
             panic!("DPDK is not installed on your system! (Cannot find rte_config.h)");
         }
 
@@ -206,7 +209,7 @@ impl State {
         };
 
         println!("cargo:rerun-if-changed={}", library_path.to_str().unwrap());
-        
+
         self.library_path = Some(library_path);
         for entry in self
             .project_path
@@ -492,31 +495,33 @@ impl State {
                         fs::remove_file(target_bin_path.clone()).unwrap();
                     }
                     let dpdk = self.dpdk.as_ref().unwrap();
-                    let includes = dpdk.include_paths.iter().map(|x| format!("-I{}", x.to_str().unwrap()));
+                    let includes = dpdk
+                        .include_paths
+                        .iter()
+                        .map(|x| format!("-I{}", x.to_str().unwrap()));
                     let libs = dpdk.libs.iter().map(|x| format!("-l{}", x));
-                    let ret: std::result::Result<std::process::Output, Error> = Command::new(cc_name.clone())
-                        .arg("-Wall")
-                        .arg("-Wextra")
-                        .arg("-std=gnu11")
-                        .args(includes)
-                        .arg(format!("-I{}", output_include))
-                        .arg("-include")
-                        .arg(dpdk_config_path)
-                        .arg("-march=native")
-                        .arg(format!("-D__CHECK_FN={}", name))
-                        .arg("-o")
-                        .arg(target_bin_path.clone())
-                        .args(libs)
-                        .arg(test_template.clone())
-                        .output();
+                    let ret: std::result::Result<std::process::Output, Error> =
+                        Command::new(cc_name.clone())
+                            .arg("-Wall")
+                            .arg("-Wextra")
+                            .arg("-std=gnu11")
+                            .args(includes)
+                            .arg(format!("-I{}", output_include))
+                            .arg("-include")
+                            .arg(dpdk_config_path)
+                            .arg("-march=native")
+                            .arg(format!("-D__CHECK_FN={}", name))
+                            .arg("-o")
+                            .arg(target_bin_path.clone())
+                            .args(libs)
+                            .arg(test_template.clone())
+                            .output();
                     if let Ok(ret) = ret {
                         if ret.status.success() {
                             success = true;
                             // println!("cargo:warning={} compile success {}", name, success);
-                        }else{
-
-                            println!("cargo:warning={:?} compile failed",ret);
-                            panic!("@@@");
+                        } else {
+                            panic!("cargo:warning={:?} compile failed", ret);
                         }
                     }
                     is_always_inline_fn.insert(name.clone(), success);
