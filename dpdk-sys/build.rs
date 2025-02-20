@@ -4,6 +4,7 @@ extern crate clang;
 extern crate etrace;
 extern crate itertools;
 extern crate num_cpus;
+extern crate pkg_config;
 extern crate regex;
 
 use etrace::some_or;
@@ -176,29 +177,26 @@ impl State {
     /// This function validates whether DPDK is installed.
     fn find_dpdk(&mut self) {
         // To find correct lib path of this platform.
-        let output = Command::new("cc")
-            .args(["-dumpmachine"])
-            .output()
-            .expect("failed obtain current machine");
-        let machine_string = String::from(String::from_utf8(output.stdout).unwrap().trim());
-        let config_header = PathBuf::from("/usr/local/include/rte_config.h");
-        let build_config_header = PathBuf::from("/usr/local/include/rte_build_config.h");
 
-        if config_header.exists() && build_config_header.exists() {
-            self.include_path = Some(PathBuf::from("/usr/local/include"));
-            self.library_path = Some(PathBuf::from(format!("/usr/local/lib/{}", machine_string)));
+        let lib = pkg_config::probe_library("libdpdk").unwrap();
+
+        let include_path = if !lib.include_paths.is_empty() {
+            lib.include_paths[0].clone()
         } else {
-            panic!(
-                "DPDK is not installed on your system! (Cannot find {} nor {})",
-                config_header.to_str().unwrap(),
-                build_config_header.to_str().unwrap()
-            );
-        }
-        println!("cargo:rerun-if-changed={}", config_header.to_str().unwrap());
-        println!(
-            "cargo:rerun-if-changed={}",
-            build_config_header.to_str().unwrap()
-        );
+            panic!("DPDK is not installed on your system! (Cannot find libdpdk)");
+        };
+
+        let library_path = if !lib.link_paths.is_empty() {
+            lib.link_paths[0].clone()
+        } else {
+            panic!("DPDK is not installed on your system! (Cannot find libdpdk)");
+        };
+
+        println!("cargo:rerun-if-changed={}", include_path.to_str().unwrap());
+        println!("cargo:rerun-if-changed={}", library_path.to_str().unwrap());
+        let config_header = include_path.join("rte_config.h");
+        self.include_path = Some(include_path);
+        self.library_path = Some(library_path);
         for entry in self
             .project_path
             .join("gen")

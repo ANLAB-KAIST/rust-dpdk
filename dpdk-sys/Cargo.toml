@@ -23,6 +23,7 @@ cc = "1"
 etrace = "1"
 itertools = "0.10"
 crossbeam-queue = "0.3"
+pkg-config = "0.3"
 
 [features]
 default = ["constants_cache"]
